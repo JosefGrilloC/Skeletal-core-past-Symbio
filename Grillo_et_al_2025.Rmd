@@ -1,0 +1,2944 @@
+---
+title: "Coral skeletal cores as windows into past Symbiodiniaceae community dynamics"
+author: "Jose F. Grillo, Vanessa Tirpitz, Jessica Reichert, Marine Canesi, Stéphanie Reynaud, Eric Douville, Maren Ziegler"
+date: "2025-09-17"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+
+This document contains all analyses of the SymPortal Post-MED sequences obtained from coral skeleton core samples collected during the TARA Pacific expedition for the reconstruction of Symbiodiniaceae communities over time.    
+
+# General aim
+
+The overarching goal of this study was to evaluate the use of skeleton cores from massive coral species for the reconstruction of Symbiodiniaceae communities at decadal and centennial time scales across species and locations. For this, century-old coral skeleton cores were sampled from two massive species (*Porites lobata* and *Diploastrea heliopora*) from two locations in the Pacific (Papua New Guinea and Palau) and ancient Symbiodiniaceae community dynamics were analyzed using ITS2 amplicon sequencing. 
+
+## Specific aims
+
+**Aim 1 - DNA method effects:**    
+
+Assess the effect of three different DNA extraction methods on the reconstructed Symbiodiniaceae communities.
+
+**Aim 2 - Species x Location effects:**    
+
+Evaluate changes in reconstructed communities obtained by species and sampling location.
+
+**Aim 3 - Dynamics related to past environmental changes:**    
+
+Probe differences in the reconstruction dynamics between two massive growing coral species in the context of past potential heat stress events. 
+
+# Experimental factors
+
+- **Sampling location:** 
+  * Palau (sampled in 2017)    
+  * Papua New Guinea (PNG - sampled in 2018)    
+
+- **Species:**     
+  * *Porites lobata* (1 core for each sampling location, 2 cores total)
+  * *Diploastrea heliopora* (1 core for each sampling location, 2 cores total)    
+
+- **DNA extraction method:** Only for the PNG Porites cores    
+  * PowerSoil    
+  * PowerSoil + EDTA    
+  * Ancient DNA protocol    
+  
+- **Chronology:** 
+  * Decadal scale (Pieces from 0 to 6)    
+  * Century scale: 
+    * Porites: Fragments 16, 17 & 18 (equivalent to 80, 85 & 90 year-old fragments)    
+    * Diploastrea: Fragments 20, 21 & 22 (equivalent to 100, 105 & 110 year-old fragments)   
+
+# Load data and packages
+
+All packages that were employed for the analysis and visualization were loaded here
+
+```{r Load packages}
+
+#General data manipulation and visualization
+library(tidyverse)
+
+#Multivariate analyses
+##Package for performing ordination, PERMANOVA and Betadisper
+library(vegan)
+##Package for performing pairwise comparisons for PERMANOVA
+library(pairwiseAdonis)
+
+#Data visualization packages
+##Package for performing Upset plot
+library(ComplexUpset)
+##Package for joining ggplot-based plots
+library(patchwork)
+##Package to extract plot legends
+library(ggpubr)
+##Package for creating color palettes
+library(ggnested)
+
+```
+
+The datasets were:
+
+- **Metadata:** File containing the metadata of the cores and experimental factors    
+
+- **Absolute_abundance:** File containing the Post-MED sequences    
+
+- **NOAA_CRW:** File containing the Sea surface temperature (SST) and Number of days with bleaching alerts for Palau and Papua New Guinea along with additional environmental variables.    
+
+```{r Load data}
+
+##Sample Metadata
+Metadata <- read.delim(file = "Data/Metadata.txt", header = T, sep = "\t", dec = ".")
+
+##Absolute abundance of Post-MED sequences
+Absolute_abundance <- read.delim(file = "Data/Absolute_Abundance.txt", header = T, sep = "\t", dec = ".")
+
+#NOAA CRW data
+NOAA_CRW <- read.csv(file = "Data/SST_NOAA_CRW_joined.csv", header = T, sep = ",", dec = ".")
+
+```
+
+
+# Data preprocessing
+
+The main goal of this section was to prepare the datasets to perform data visualization and statistical testing.
+
+## Create the complete, tidy dataset
+
+The metadata file was modified to include additional relevant variables for downstream analyses including information related to coral genus, fragment age and DNA extraction method.    
+
+```{r Metadata - Include useful variables}
+
+#Create a clean dataframe 
+Metadata_clean <- Metadata %>%
+  #Select the relevant columns
+  select(sample_uid, sample_name, post_med_absolute) %>%
+  #Create new Metadata columns
+  mutate(
+    
+    #Coral genera
+    Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = sample_name, ignore.case = T) ~ "Diploastrea",
+                           grepl(pattern = "^C", x = sample_name, ignore.case = T) ~ "Neg_Control",
+                           grepl(pattern = "^G", x = sample_name, ignore.case = T) ~ "PCR_Blank_Seq"), levels = c("Porites", "Diploastrea", "Neg_Control", "PCR_Blank_Seq")),
+         
+    #DNA extraction method
+    DNA_method = factor(x = case_when(grepl(pattern = "B$", x = sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+    #Sampling location
+    Location = factor(x = case_when(grepl(pattern = "B$", x = sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+    #Number asociated with each fragment
+    Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Age since sampling of each fragment
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110"))) %>%
+  #Rename the relevant columns
+  rename(Sample_SymPortal_code = sample_uid, Sample_name = sample_name, Post_MED_sequences = post_med_absolute) %>%
+  #Reorder the columns
+  select(Sample_SymPortal_code, Sample_name, Fragment_label, Fragment_age, Location, Coral_genus, DNA_method, Post_MED_sequences)
+
+```
+
+To obtain a final dataset where the metadata and post-MED sequence abundance is present, the expanded metadata and absolute abundance datasets were joined.
+
+
+```{r Creating working dataframe - Join Metadata and Abundance}
+
+#Creating the long-format joined dataset
+Abs_abund <- left_join(Metadata_clean, 
+                             Absolute_abundance %>%
+                               #Modify sample code variable name
+                               rename(Sample_SymPortal_code = sample_uid), 
+                             by = "Sample_SymPortal_code") %>%
+  #Change the data structure to long format
+  pivot_longer(cols = -c("Sample_SymPortal_code", "Sample_name", "Fragment_label", "Fragment_age", "Location", "Coral_genus", "DNA_method", "Post_MED_sequences"), names_to = "Symbiont_genus", values_to = "Abundance") %>%
+  #Create a new variable with the simplified Clades
+  mutate(Symbiont_genus_simp = case_when(grepl(pattern = "^A|_A$", x = Symbiont_genus) ~ "A",
+                                grepl(pattern = "^B|_B$", x = Symbiont_genus) ~ "B",
+                                grepl(pattern = "^C|_C$", x = Symbiont_genus) ~ "C",
+                                grepl(pattern = "^D|_D$", x = Symbiont_genus) ~ "D",
+                                TRUE ~ Symbiont_genus), .before = "Symbiont_genus") %>%
+  #Remove the SymPortal sample code
+  select(-Sample_SymPortal_code)
+
+```
+
+The final step was verifying that all the information is present from both datasets
+
+```{r Creating working dataframe - Join Metadata and Abundance - Verification}
+
+#Verifiying that the information matches
+all((Abs_abund %>%
+  #Group the data by sample
+  group_by(Sample_name, Post_MED_sequences) %>%
+  #Obtain the total number of sequences by each Genus DIV
+  summarize(Total_Abundance = sum(Abundance)))$Post_MED_sequences ==
+  (Abs_abund %>%
+  #Group the data by sample
+  group_by(Sample_name, Post_MED_sequences) %>%
+  #Obtain the total number of sequences by each Genus DIV
+  summarize(Total_Abundance = sum(Abundance)))$Total_Abundance)
+
+```
+
+### Filter out blanks and negative controls
+
+All post-MED sequences present in the processing blanks and negative controls were filtered out from the entire dataset.  
+
+Example:    
+
+|             	|        Blank       	|       Sample       	|  Corrected sample  	|
+|:-----------:	|:------------------:	|:------------------:	|:------------------:	|
+|             	| Symbiodinium (Adx) 	| Symbiodinium (Adx) 	|    NOT INCLUDED    	|
+|             	|  Symbiodinum (A1)  	|  Symbiodinium (A1) 	|    NOT INCLUDED    	|
+| Genus (DIV) 	| Symbiodinium (A15) 	|          -         	| Symbiodinium (A15) 	|
+|             	|  Durusdinium (D3)  	|          -         	|  Durusdinium (D3)  	|
+|             	|  Cladocopium (C15) 	|  Cladocopium (C15) 	|    NOT INCLUDED    	|
+
+
+
+```{r Blank corrected dataset}
+
+Blanks <- Abs_abund %>%
+  #Filter to only obtain Blanks and the PCR names
+  filter(grepl(pattern = "^C_|G_PCR", x = Sample_name)) %>%
+  #Pre-filter to obtain abundances higher than 0
+  filter(Abundance > 0)
+
+
+G_PCR <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "G_PCR") %>%
+  #Select the variables
+  select(Symbiont_genus)
+
+
+C_P_B <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_P_B") %>%
+  #Select the variables
+  select(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+C_P_D <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_P_D") %>%
+  #Obtain the names of the Symbiont_genuss per blanks
+  distinct(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+C_P_E <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_P_E") %>%
+  #Obtain the names of the Symbiont_genuss per blanks
+  distinct(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+C_P_F <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_P_F") %>%
+  #Obtain the names of the Symbiont_genuss per blanks
+  distinct(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+C_D_B <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_D_B") %>%
+  #Obtain the names of the Symbiont_genuss per blanks
+  distinct(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+C_D_E <- Blanks %>%
+  #Filter the dataset to obtain only the desired sample
+  filter(Sample_name == "C_D_E") %>%
+  #Obtain the names of the Symbiont_genuss per blanks
+  distinct(Symbiont_genus) %>%
+  #Include the PCR blanks
+  left_join(G_PCR, by = "Symbiont_genus", keep = T) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, PCR_Blank = Symbiont_genus.y)
+
+
+#________________________________________________________________________
+
+PXB_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "P\\dB|P\\d\\dB", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_P_B, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y) #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+
+PXD_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "P\\dD|P\\d\\dD", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_P_D, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y) #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+
+PXE_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "P\\dE|P\\d\\dE", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_P_E, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y)  #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+
+PXF_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "P\\dF|P\\d\\dF", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_P_F, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y) #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+
+DXB_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "D\\dB|D\\d\\dB", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_D_B, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y) #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+
+DXE_adj <- Abs_abund %>%
+  #Filter the samples to obtain the desired sample
+  filter(grepl(pattern = "D\\dE|D\\d\\dE", x = Sample_name)) %>% 
+  #Join with the corresponding blank
+  left_join(C_D_E, by = "Symbiont_genus", keep = T) %>%
+  #Filter out the rows with NAs as determined by the Blank
+  filter(is.na(Symbiont_genus.y)) %>%
+  #Rename the Symbiont_genus columns
+  rename(Symbiont_genus = Symbiont_genus.x, Blank = Symbiont_genus.y) #%>%
+  #Filter out the Symbiont_genuss with abundance of 0
+  #filter(Abundance > 0)
+
+#Join all the separate datasets
+Abs_abund_clean <- bind_rows(PXB_adj, DXB_adj, PXD_adj, PXE_adj, PXF_adj, DXE_adj) %>%
+  #Select the relevant variables
+  select(-c("Blank", "PCR_Blank")) %>%
+  #Include the sample names as a factor
+  mutate(Sample_name = factor(x = Sample_name, levels = c("P0B", "P1B", "P2B", "P3B", "P4B", "P5B", "P6B", "P16B", "P17B", "P18B", 
+                                                               "P0D", "P1D", "P2D", "P3D", "P4D", "P5D", "P6D", "P16D", "P17D", "P18D", 
+                                                               "P0E", "P1E", "P2E", "P3E", "P4E", "P5E", "P6E", "P16E", "P17E", "P18E", 
+                                                               "P0F", "P1F", "P2F", "P3F", "P4F", "P5F", "P6F", "P16F", "P17F", "P18F", 
+                                                               "D0B", "D1B", "D2B", "D3B", "D4B", "D5B", "D6B", "D20B", "D21B", "D22B",
+                                                               "D0E", "D1E", "D2E", "D3E", "D4E", "D5E", "D6E", "D20E", "D21E", "D22E")), .before = Fragment_label)
+  
+#Remove temporary datasets
+rm(Blanks, C_D_B, C_D_E, C_P_B, C_P_D, C_P_E, C_P_F, DXB_adj, DXE_adj, G_PCR, PXB_adj, PXD_adj, PXE_adj, PXF_adj)
+
+```
+
+Finally we updated the dataset to include the total count of Post-MED sequences after the blank correction
+
+```{r Update the Abs-abund-clean dataset}
+
+#Join both datasets
+Abs_abund_clean <- left_join(
+  Abs_abund_clean, 
+  
+  #Percentage of lost sequences per sample
+  Abs_abund_clean %>%
+  #Group the data by sample
+  group_by(Sample_name, Fragment_label, Fragment_age, Location, Coral_genus, DNA_method, Post_MED_sequences) %>%
+  #Obtain the total number of sequences per sample
+  summarize(Post_MED_sequences_blank_corrected = sum(Abundance)) %>%
+  #Ungroup the data
+  ungroup() %>%
+  #Create a new variable with the difference
+  mutate(Lost_seqs_blank_correction = Post_MED_sequences - Post_MED_sequences_blank_corrected,
+         Lost_seqs_blank_correction_perc = (Post_MED_sequences_blank_corrected/Post_MED_sequences) * 100),
+  by = colnames(Abs_abund_clean)[1:7]) %>%
+  #Sort the columns
+  select(Sample_name, Fragment_label, Fragment_age, Location, Coral_genus, DNA_method, Post_MED_sequences, Post_MED_sequences_blank_corrected, Lost_seqs_blank_correction, Lost_seqs_blank_correction_perc, Symbiont_genus_simp, Symbiont_genus, Abundance)
+
+
+```
+
+## Calculate relative abundance over 0.1%
+
+We proceeded to calculate the relative abundance of the samples. For this we employed the Post-MED sequences after blank correction
+
+```{r Relative abundance over 0.1 dataset}
+
+Abund_clean_rel_0.1 <- Abs_abund_clean %>%
+  #Calculate the relative abundance
+  mutate(Rel_abund = Abundance/Post_MED_sequences_blank_corrected,
+         Rel_abund_per = (Abundance/Post_MED_sequences_blank_corrected) * 100, 
+         .after = Abundance) %>%
+  #Assign the sequences below 0.1% to a "Others" category
+  mutate(
+    #Create a new Symbiont_genus variable that contains the Others category
+    Symbiont_genus_others = case_when(Rel_abund_per < 0.1 ~ "Others",
+                               TRUE ~ Symbiont_genus),
+    #Create a new Symbiont_genus_simp variable that includes the Others category
+    Symbiont_genus_simp_others = case_when(Symbiont_genus_others == "Others" ~ "Others",
+                                    TRUE ~ Symbiont_genus_simp) )
+
+
+```
+
+
+## Assign colors to each Genus DIV
+
+We proceeded to pre-assign a defined color to each DIV present in the **blank-corrected** dataset as it represents the most complete data that we will employ. By assign a color to each post-MED sequence (DIV) we can ensure a uniform color distribution in all analyses (for example all bar plots).    
+
+In order to assign the colors for each main symbiont genus, we employed the package **ggnested**, which allows us to assign a main color palette for each symbiont genus and it can automatically assign a gradient for all the DIVs present in a genus.    
+
+For further references for the color palette check: https://github.com/gmteunisse/ggnested    
+
+- **Symbiodinium**: "#F0E442"    
+
+- **Breviolum**: "#0072B2"    
+
+- **Cladocopium**: "#CC79A7"    
+
+- **Durusdinium**: "#202A2"    
+
+- **Others** color: "#bbbbbb"    
+
+
+```{r Assign colors to each Genus DIV}
+
+#Extract the color codes
+Color_palette_Symbiont_genus <- ggnested::extract_palette(Abs_abund_clean %>% ggnested::ggnested(aes(x = Sample_name, y = Abundance, main_group = Symbiont_genus_simp, sub_group = Symbiont_genus), main_palette = c("#F0E442", "#0072B2", "#CC79A7", "#202A25"), gradient_type = "fancy", min_l = 0.25, max_l = 0.95) + geom_col( show.legend = F) ) %>%
+  #Obtain unique columns for Symbiont_genus and Symbiont_genus_simp
+  separate(col = group_subgroup, into = c("Symbiont_genus_simp", "Symbiont_genus"), sep = " - ", remove = F) %>%
+  #Rename variables
+  rename(Symbiont_genus_combined = group_subgroup, Symbiont_genus_simp_color = group_colour, Symbiont_genus_color = subgroup_colour)
+
+```
+
+
+Once the colors were assigned and we verified that there was enough contrast between them with a bar plot containing all samples and Genus DIV
+
+```{r Update the Abs-abund-clean dataset with colors}
+
+#Join both datasets
+Abs_abund_clean <- left_join(Abund_clean_rel_0.1,
+                  Color_palette_Symbiont_genus,
+                  by = c("Symbiont_genus", "Symbiont_genus_simp")) %>%
+  #Create a new Clade variable for a better legend
+  mutate(Symbiont_genus_combined = str_replace(string = Symbiont_genus_combined, pattern = " - ", replacement = ": "),
+         #Create a new Symbiont_genus_color variable that assigns grey for the Others category
+    Symbiont_genus_color_others = case_when(Symbiont_genus_others == "Others" ~ "#bbbbbb",
+                                     TRUE ~ Symbiont_genus_color),
+    
+    #Create a new Symbiont_genus_color variable that assigns grey for the Others category
+    Symbiont_genus_simp_color_others = case_when(Symbiont_genus_simp_others == "Others" ~ "#bbbbbb",
+                                     TRUE ~ Symbiont_genus_simp_color),
+    #Create a new Symbiont_genus_combined that includes the Other category
+    Symbiont_genus_combined_others = case_when(Symbiont_genus_simp_others  == "Others" ~ "Others",
+                                        TRUE ~ Symbiont_genus_combined) )
+
+```
+
+## Obtain a final working dataset
+
+The final step was to clean up the variables inside the final dataset to only include relevant variables for downstream analyses
+
+```{r Final working dataset}
+
+#Create the new dataset
+Abundance <- Abs_abund_clean %>%
+  #Select the relevant variables and reorder them
+  select("Sample_name", "Fragment_label", "Fragment_age", "Location", "Coral_genus", "DNA_method", "Symbiont_genus_simp", "Symbiont_genus_simp_others", "Symbiont_genus", "Symbiont_genus_others", "Abundance", "Rel_abund", "Rel_abund_per", "Symbiont_genus_simp_color", "Symbiont_genus_color", "Symbiont_genus_color_others", "Symbiont_genus_simp_color_others", "Symbiont_genus_combined", "Symbiont_genus_combined_others")
+
+#_______________
+
+#Remove the unused datasets
+rm(Abs_abund, Abs_abund_clean, Absolute_abundance, Metadata, Metadata_clean, Abund_clean_rel_0.1, Color_palette_Symbiont_genus)
+
+```
+
+## Variable explanation
+
+All the modifications done to obtain a final dataset where the metadata and absolute abundance of the Post-MED sequences culminated in the dataset: **Abundance**.    
+
+The variables present in the dataset are:    
+
+* **Sample_name:** The name of each fragment created as a code that combines the coral genus (P = Porites, D = Diploastrea), fragment label (See variable **Fragment_label**) and sampling location and DNA extraction method (B = Palau & PowerSoil EDTA, D = Papua New Guinea & PowerSoil, E = Papua New Guinea & PowerSoil EDTA, F = Papua New Guinea & Ancient DNA).     
+
+* **Fragment_label:** Number given to each fragment to represent the age of the fragment. The fragments labelled from 0 - 6 were present for all samples. Fragments labelled as 16 - 18 were only present for *Porites lobata*. Fragments labelled as 20 - 22 were only present for *Diploastrea heliopora*. (0 = Head, 1 = 5-year-old fragment, 2 = 10-year-old fragment, 3 = 15-year-old fragment, 4 = 20-year-old fragment, 5 = 25-year-old fragment, 6 = 30-year-old fragment, 16 = 80-year-old fragment, 17 = 85-year-old fragment, 18 = 90-year-old fragment, 20 = 100-year-old fragment, 21 = 105-year-old fragment, 22 = 110-year-old fragment).    
+
+* **Fragment_age:** Age of each fragment. (See **Fragment_label**)    
+
+* **Location:** Sampling location of each core. Palau and Papua New Guinea (PNG)    
+
+* **Coral_genus:** Genus of the coral skeleton. (Porites = *Porites lobata*, Diplo = *Diploastrea heliopora*)      
+
+* **DNA_method:** Method employed for DNA extraction. (Qiagen PowerSoil Pro kit = PowerSoil, Decalcification and Qiagen PowerSoil Pro kit = PowerSoil_EDTA, Decalcification and Ancient DNA extraction protocol = Ancient_DNA)    
+
+* **Symbiont_genus_simp:** Simplified classification by Clade of each Post-MED sequences. Grouped by Symbiodiniaceae genus/clade (See *Symbiont_genus*)    
+
+* **Symbiont_genus_simp_others:** Simplified classification by "Clade" of each Post-MED sequences. Grouped by Symbiodiniaceae genus/clade. The others category was added for those sequences with a relative abundance lower than 0.1% over all samples.    
+
+* **Symbiont_genus:** Post-MED sequences corresponding to the genus of each Symbiodiniaceae as assigned by SymPortal (following the old Clade classification). For simplicity in the analysis the genera were kept as clades during the analysis. (Clade A = *Symbiodinium*, Clade B = *Breviolum*, Clade C = *Cladocopium*, Clade D = *Durusdinium*)    
+
+* **Symbiont_genus_others:** Post-MED sequences corresponding to the genus of each Symbiodiniaceae as assigned by SymPortal (following the old Clade classification). For simplicity in the analysis the genera were kept as clades during the analysis. (Clade A = *Symbiodinium*, Clade B = *Breviolum*, Clade C = *Cladocopium*, Clade D = *Durusdinium*). The others category was added for those sequences with a relative abundance lower than 0.1% over all samples.    
+
+* **Abundance:** Absolute abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade    
+
+* **Rel_abund:** Relative abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade per sample     
+
+* **Rel_abund_per:** Percentage relative abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade per sample    
+
+* **Symbiont_genus_simp_color:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_simp**    
+
+* **Symbiont_genus_color:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus**   
+
+* **Symbiont_genus_color_others:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_others**. The others category was assigned to a gray color.    
+
+* **Symbiont_genus_simp_color_others:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_simp_others**. The others category was assigned to a gray color.   
+
+* **Symbiont_genus_combined:** Category created for easier plotting.    
+
+* **Symbiont_genus_combined_others:** Category created for easier plotting including others category.   
+
+# Data analysis
+
+## Aim 1 - DNA method effects
+
+**Assess the effect of three different DNA extraction methods on the reconstructed Symbiodiniaceae communities.**
+
+In order to answer these questions we proceeded to visualize the Genus (DIV) as bar plots, NMDS plots and we evaluated the shared Genus (DIV) between the DNA extraction methods.
+
+### Bar plots
+
+We visualized relative abundance of the post-MED sequences through a stacked bar plot.    
+
+>NOTE: The relative abundance *under* 0.1% was included as the "Others" category
+
+```{r RQ1 - DNA extraction methods - Bar plot}
+
+DNA_method_bar_plot <- Abundance %>%
+  #Select the PNG Porites samples
+  filter(Location == "PNG" & Coral_genus == "Porites") %>%
+  #Create a new DNA_method variable for plotting
+  mutate(DNA_method_plot = factor(x = DNA_method, levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA"), labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")) ) %>%
+  #Select the data for the plot
+  ggplot() +
+  # First geom_col for the fill aesthetic (stacked bars)
+  geom_col(aes(x = Fragment_age, y = Rel_abund, 
+               fill = Symbiont_genus_combined_others), 
+           color = NA, show.legend = FALSE) +  # Hide color here to prevent duplication
+  
+  # Second geom_col for the color aesthetic (transparent borders)
+  geom_col(data = Abundance %>%
+  #Select the PNG Porites samples
+  filter(Location == "PNG" & Coral_genus == "Porites") %>%
+  #Create a new DNA_method variable for plotting
+  mutate(DNA_method_plot = factor(x = DNA_method, levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA"), labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")),
+         
+         Symbiont_genus_simp_others_plot = factor(x = case_when(Symbiont_genus_simp_others == "A" ~ "*Symbiodinium*",
+                                                       Symbiont_genus_simp_others == "B" ~ "*Breviolum*",
+                                                       Symbiont_genus_simp_others == "C" ~ "*Cladocopium*",
+                                                       Symbiont_genus_simp_others == "D" ~ "*Durusdinium*",
+                                                       Symbiont_genus_simp_others == "Others" ~ "Others"), levels = c("*Symbiodinium*", "*Breviolum*", "*Cladocopium*", "*Durusdinium*", "Others")) ) , 
+           aes(x = Fragment_age, y = Rel_abund, 
+               color = Symbiont_genus_simp_others_plot), 
+           fill = NA, alpha = 0, show.legend = TRUE) +
+  #Include the scale_manual
+  scale_fill_manual(values = setNames(subset(x = Abundance, subset = Location == "PNG" & Coral_genus == "Porites")$Symbiont_genus_color_others, subset(x = Abundance, subset = Location == "PNG" & Coral_genus == "Porites")$Symbiont_genus_combined_others)) +
+  #Include the colors
+  scale_color_manual(values = c("transparent", "transparent", "transparent", "transparent", "transparent"),  name = "Symbiodiniaceae\nGenus") +
+  #Change the legend
+  guides(fill = "none", 
+          color = guide_legend(override.aes = list(
+    fill = c("#a5822d", "#3d8590", "#91467f", "#408e5e", "#bbbbbb"),
+    color = c("#a5822d", "#3d8590", "#91467f", "#408e5e", "#bbbbbb"),
+    alpha = 1)) )  +
+  
+  #Include facets
+  facet_grid(cols = vars(DNA_method_plot),  scales = "free") + 
+  #Include a vertical line to indicate the ancient samples
+  geom_vline(xintercept = 7.5, linetype = "dashed", linewidth = 0.7, color = "darkgray") +
+  #Include plot title
+  labs(x = "Fragment age (Years)", y = "Relative abundance", tag = "A") + 
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    axis.text.x = element_text(color = "black", size = 13), #Before size = 10
+    axis.text.y = element_text(color = "black", size = 16), #Before size = 12
+    axis.title = element_text(color = "black", size = 17), #Before size = 13
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = element_text(color = "black", size = 16), #Before size = 12
+    #Change the legend
+    legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+    legend.text = ggtext::element_markdown(color = "black", size = 15), #Before size = 12
+    legend.position = "bottom",
+    #Include tags
+    plot.tag = element_text(face = "bold", size = 20),
+    plot.tag.position = c(0.05, 1)
+#    plot.tag.location = "plot"
+    )
+
+DNA_method_bar_plot
+
+#ggsave(filename = "DNA_method_bar_plot.png", width = 200, height = 150, units = "mm", dpi = 1800)
+#ggsave(filename = "DNA_method_bar_plot.svg", width = 200, height = 150, units = "mm", dpi = 1800)
+
+
+```
+
+
+### NMDS plot
+
+To visualize the community structure we performed a NMDS based on Bray-Curtis distance. The ordination was calculated with the logarithm (+1) of the abundances.
+
+>NOTE: We filtered the relative abundance under 0.1%
+
+```{r RQ1 - DNA extraction methods - NMDS - Data}
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+DNA_method_ord <- metaMDS(comm = Abundance %>% filter(Location == "PNG" & Coral_genus == "Porites" & Rel_abund_per > 0.1) %>% mutate(Abundance_log = log(Abundance + 1), .after = Sample_name) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance_log, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray", k = 3)
+
+#Extract the data
+DNA_method_ord_data <- as.data.frame(scores(DNA_method_ord)$sites) %>%
+  #Include the metadata
+  
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(Coral_genus = factor(case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+         
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                                grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                                grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                                grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+          Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90")) )
+
+
+#_____________________________________________________________________________________________ 
+
+#Create the color palette
+
+ggnested::extract_palette(DNA_method_ord_data %>%
+  #Select the data
+  ggnested::ggnested(aes(x = NMDS1, y = NMDS2, 
+             main_group = Coral_genus, 
+             sub_group = Fragment_age),
+             main_palette = c("#0077b6"),
+           gradient_type = "tints") +
+  #Select the type of plot
+  geom_point(aes(shape = DNA_method), size = 6, show.legend = F) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        legend.position = "bottom") )
+
+#Create the color dataset
+DNA_method_ord_colors <- DNA_method_ord_data %>%
+  #Include a new variable for the plot
+  mutate(Fragment_age_color = case_when(Fragment_age == "0" ~ "white",
+                                        Fragment_age == "5" ~ "#C0E5FA",
+                                        Fragment_age == "10" ~ "#A7DAF5",
+                                        Fragment_age == "15" ~ "#90CEF0",
+                                        Fragment_age == "20" ~ "#78C3EB",
+                                        Fragment_age == "25" ~ "#60B7E6",
+                                        Fragment_age == "30" ~ "#48ACE1",
+                                        Fragment_age == "80" ~ "#30A0DC",
+                                        Fragment_age == "85" ~ "#1895D7",
+                                        Fragment_age == "90" ~ "#008AD3"))
+
+
+```
+
+
+```{r RQ1 - DNA extraction methods - NMDS - Plot}
+
+#NMDS 1 + 2
+
+DNA_method_ord_plot_1_2 <- DNA_method_ord_data %>%
+  #Include a new variable for the plot
+  mutate(Fragment_age_color = case_when(Fragment_age == "0" ~ "white",
+                                        Fragment_age == "5" ~ "#C0E5FA",
+                                        Fragment_age == "10" ~ "#A7DAF5",
+                                        Fragment_age == "15" ~ "#90CEF0",
+                                        Fragment_age == "20" ~ "#78C3EB",
+                                        Fragment_age == "25" ~ "#60B7E6",
+                                        Fragment_age == "30" ~ "#48ACE1",
+                                        Fragment_age == "80" ~ "#30A0DC",
+                                        Fragment_age == "85" ~ "#1895D7",
+                                        Fragment_age == "90" ~ "#008AD3")) %>%
+  #Select the data for plottiing
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(shape = DNA_method, fill = Fragment_age), size = 10, show.legend = T, color = "#0077b6", stroke = 1.5) +
+  #Select the shapes
+  scale_shape_manual(values = c(21, 22, 24), name = "DNA extraction\nmethod", labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")) + 
+  #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.3, y = 0.83, label = paste("3D-Stress:", signif(DNA_method_ord$stress, 3)), size = 6) +
+  #Include the color selection
+  scale_fill_manual(values = setNames(left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age_color, left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age), 
+                    name = "Fragment age", 
+                    guide = guide_legend(theme = theme(
+      legend.direction = "horizontal",
+      legend.title.position = "left",
+      legend.text = element_text(hjust = 0.5, vjust = 1))) ) +
+  #Include the elipses
+  stat_ellipse(aes(color = DNA_method), linetype = "dashed", show.legend = F) + 
+  #Include colors
+  scale_color_manual(values = c("#0077b6", "#0077b6", "#0077b6"))+
+  #Choose which legends appear
+  guides(color = "none", 
+         shape = "none",
+         fill = guide_legend(
+           nrow = 1,
+           override.aes = list(
+           shape = 21,
+           color = "#0077b6",
+           fill = c("0" ="white", "5" = "#C0E5FA", "10" = "#A7DAF5", "15" = "#90CEF0", "20" = "#78C3EB", "25" = "#60B7E6", "30" = "#48ACE1", "80" = "#30A0DC", "85" = "#1895D7", "90" = "#008AD3")),
+           theme = theme(legend.text.position = "bottom",
+                         legend.background = element_rect(fill = "transparent"))) ) +
+  #Include the stress value
+#  labs(subtitle = paste("3D-Stress:", signif(DNA_method_ord$stress, 3))) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        #Modify the caption size
+        plot.subtitle = element_text(size = 16),
+        #Modify the axis text
+        axis.text = element_text(size = 16, color = "black"),
+        axis.title = element_text(size = 16),
+        #Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = element_text(color = "black", size = 16), #Before size = 12
+        #Include tags
+        #plot.tag = element_text(face = "bold", size = 16),
+        #plot.tag.location = "plot"
+        )
+
+DNA_method_ord_plot_1_2
+
+#____________________________________________________________________________________________________
+
+#NMDS 1 and 3
+
+DNA_method_ord_plot_1_3 <- DNA_method_ord_data %>%
+  #Include a new variable for the plot
+  mutate(Fragment_age_color = case_when(Fragment_age == "0" ~ "white",
+                                        Fragment_age == "5" ~ "#C0E5FA",
+                                        Fragment_age == "10" ~ "#A7DAF5",
+                                        Fragment_age == "15" ~ "#90CEF0",
+                                        Fragment_age == "20" ~ "#78C3EB",
+                                        Fragment_age == "25" ~ "#60B7E6",
+                                        Fragment_age == "30" ~ "#48ACE1",
+                                        Fragment_age == "80" ~ "#30A0DC",
+                                        Fragment_age == "85" ~ "#1895D7",
+                                        Fragment_age == "90" ~ "#008AD3")) %>%
+  #Select the data for plottiing
+  ggplot(aes(x = NMDS1, y = NMDS3)) +
+  #Select the type of plot
+  geom_point(aes(shape = DNA_method, fill = Fragment_age), size = 10, show.legend = T, color = "#0077b6", stroke = 1.5) +
+  #Select the shapes
+  scale_shape_manual(values = c(21, 22, 24), name = "DNA extraction\nmethod", labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")) + 
+    #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.3, y = 0.83, label = paste("3D-Stress:", signif(DNA_method_ord$stress, 3)), size = 6) +
+  #Include the color selection
+  scale_fill_manual(values = setNames(left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age_color, left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age) ) +
+  #Include the elipses
+  stat_ellipse(aes(color = DNA_method), linetype = "dashed", show.legend = F) + 
+  #Include colors
+  scale_color_manual(values = c("#0077b6", "#0077b6", "#0077b6"))+
+  #Choose which legends appear
+  guides(color = "none", 
+         fill = "none") +
+  #Include the stress value
+#  labs(subtitle = paste("3D-Stress:", signif(DNA_method_ord$stress, 3))) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        #Modify the caption size
+        plot.subtitle = element_text(size = 16),
+        #Modify the axis text
+        axis.text = element_text(size = 16, color = "black"),
+        axis.title = element_text(size = 16),
+        #Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = element_text(color = "black", size = 16), #Before size = 12
+        #Include tags
+        #plot.tag = element_text(face = "bold", size = 16),
+        #plot.tag.location = "plot"
+        )
+
+DNA_method_ord_plot_1_3 
+
+#____________________________________________________________________________________________________
+
+#NMDS 1 and 3
+
+DNA_method_ord_plot_2_3 <- DNA_method_ord_data %>%
+  #Include a new variable for the plot
+  mutate(Fragment_age_color = case_when(Fragment_age == "0" ~ "white",
+                                        Fragment_age == "5" ~ "#C0E5FA",
+                                        Fragment_age == "10" ~ "#A7DAF5",
+                                        Fragment_age == "15" ~ "#90CEF0",
+                                        Fragment_age == "20" ~ "#78C3EB",
+                                        Fragment_age == "25" ~ "#60B7E6",
+                                        Fragment_age == "30" ~ "#48ACE1",
+                                        Fragment_age == "80" ~ "#30A0DC",
+                                        Fragment_age == "85" ~ "#1895D7",
+                                        Fragment_age == "90" ~ "#008AD3")) %>%
+  #Select the data for plottiing
+  ggplot(aes(x = NMDS2, y = NMDS3)) +
+  #Select the type of plot
+  geom_point(aes(shape = DNA_method, fill = Fragment_age), size = 10, show.legend = F, color = "#0077b6", stroke = 1.5) +
+  #Select the shapes
+  scale_shape_manual(values = c(21, 22, 24), name = "DNA extraction\nmethod", labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")) + 
+    #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.46, y = 0.83, label = paste("3D-Stress:", signif(DNA_method_ord$stress, 3)), size = 6) +
+  #Include the color selection
+  scale_fill_manual(values = setNames(left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age_color, left_join(DNA_method_ord_data, DNA_method_ord_colors)$Fragment_age) ) +
+  #Include the elipses
+  stat_ellipse(aes(color = DNA_method), linetype = "dashed", show.legend = F) + 
+  #Include colors
+  scale_color_manual(values = c("#0077b6", "#0077b6", "#0077b6"))+
+  #Include the stress value
+#  labs(subtitle = paste("3D-Stress:", signif(DNA_method_ord$stress, 3))) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        #Modify the caption size
+        plot.subtitle = element_text(size = 16),
+        #Modify the axis text
+        axis.text = element_text(size = 16, color = "black"),
+        axis.title = element_text(size = 16),
+        #Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = element_text(color = "black", size = 16), #Before size = 12
+        #Include tags
+        #plot.tag = element_text(face = "bold", size = 16),
+        #plot.tag.location = "plot"
+        )
+
+DNA_method_ord_plot_2_3 
+
+
+```
+
+
+### PERMANOVA
+
+```{r RQ1 - DNA extraction methods - PERMANOVA - Betadisper - Pairwise}
+
+#Create the datasets
+##Distance matrix
+DNA_method_dist <- vegdist(x = Abundance %>% 
+  #Obtain only Porites for PNG over 0.1%
+  filter(Location == "PNG" & Coral_genus == "Porites" & Rel_abund_per > 0.1) %>% 
+  #Change the data structure: Rows are samples, columns are Post-MED sequences or Coral_genus DIV
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Assign sample names as row names for the vegdist function
+  column_to_rownames(var = "Sample_name"),
+  method = "bray")
+
+##Metadata for distance matrix
+DNA_method_dist_metadata <- Abundance %>% 
+  #Obtain only Porites for PNG over 0.1%
+  filter(Location == "PNG" & Coral_genus == "Porites" & Rel_abund_per > 0.1) %>% 
+  #Change the data structure: Rows are samples, columns are Post-MED sequences or Coral_genus DIV
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Create a new metadata column with the DNA_methods
+  mutate(DNA_method = factor(x = case_when(grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")), .after = "Sample_name",
+         
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3"))) %>%
+  #Assign sample names as row names for the adonis function
+  column_to_rownames(var = "Sample_name")
+
+#_____________________________________________________________________________
+
+#Run the PERMANOVA
+
+#Set the random seed
+set.seed(15081998)
+#Run the PERMANOVA - Only for DNA methods
+adonis2(formula = DNA_method_dist ~ DNA_method, data = DNA_method_dist_metadata, permutations = 9999)
+
+#________________________________________________________________________________________________
+
+#Test for multivariate homogeneity of variances
+##Betadisper - general
+anova(betadisper(DNA_method_dist, group = DNA_method_dist_metadata$DNA_method))
+
+#________________________________________________________________________________________________
+
+#Posthoc PERMANOVA
+set.seed(15081998)
+pairwise.adonis(x = DNA_method_dist, factors = DNA_method_dist_metadata$DNA_method)
+
+
+```
+
+
+### UpSet plot
+
+In order to inspect the number of shared Genus (DIV) between each DNA extraction method, an Upset plot was performed.    
+
+To create the UpSet plot we first need to group the data by DNA method (and Symbiodiniaceae) so that we can add the abundances per DIV. Then we create a logical variable based on the abundance of a DIV within each DNA extraction method.    
+
+For formatting the data we have to format the dataset so that we have the DNA method as columns, the DIVs as rows and the logical variable as the data.
+
+```{r RQ1 - DNA extraction methods - UpSet}
+
+##Go from long to wide format
+DNA_Method_Upset_data <- as.data.frame(t(Abundance %>%
+  #Filter to obtain the DNA extraction methods
+  filter(Location == "PNG", Coral_genus == "Porites") %>%
+  #Filter out DIVs with an abundance lower than 0.01
+  filter(Rel_abund_per > 0.1) %>%
+  #Group the data by DNA method
+  group_by(DNA_method, Symbiont_genus) %>%
+  #Calculate the sum the of the abundances
+  summarize(Total_seqs = sum(Abundance)) %>%
+  #Create a new Abundance variable that is only presence/abscense
+  mutate(Abundance_logical = case_when(Total_seqs > 0 ~ 1,
+                                       TRUE ~ 0)) %>%
+  #Change the structure of the data
+  pivot_wider(id_cols = DNA_method, names_from = Symbiont_genus, values_from = Abundance_logical, values_fill = 0) )) %>%
+  #rownames to column
+  rownames_to_column(var = "Symbiont_genus") %>%
+  #row to column names
+  rename(PowerSoil = V1, PowerSoil_EDTA = V2, Ancient_DNA = V3) %>%
+  #Eliminate the first row
+  filter(Symbiont_genus != "DNA_method") %>%
+  #Transfrom data as numeric
+  mutate(PowerSoil = as.numeric(PowerSoil), PowerSoil_EDTA = as.numeric(PowerSoil_EDTA), Ancient_DNA = as.numeric(Ancient_DNA)) %>%
+  #Rename the variables for the plot
+  rename("PowerSoil Pro" = "PowerSoil", "Decalcification\nPowerSoil Pro" = "PowerSoil_EDTA", "Decalcification\nAncient DNA" = "Ancient_DNA")
+
+#_______________________________________________________________________
+
+DNA_Method_Upset_plot <- upset(data = DNA_Method_Upset_data, 
+      #Groups
+      intersect = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA"),
+      #Change group names (x axis)
+      name = "DNA extraction methods",
+      #Modify the stripes
+      stripes = upset_stripes(geom = geom_segment(size = 15), colors = c("white", "gray90")),
+      #Modify the intersection matrix
+      matrix = intersection_matrix(geom = geom_point(size = 7), segment = geom_segment(linewidth = 2)),
+      #Modify the set size label
+      set_sizes = (upset_set_size() + labs(y = "Number of post-MED\nsequences") + theme(axis.text.x = element_text(size = 15, color = "black"), axis.title.x = element_text(size = 15, color = "black") )  
+                   ),
+      #Modify the intersection size area
+      base_annotations = list("Intersection size" = intersection_size(text = list(size = 6)) + theme(axis.text.y = element_text(size = 15, color = "black"))
+                              ),
+      #Group the plot so that it is easier to combine with other plots
+      wrap = T,
+      #Change the theme elements
+      themes = 
+        
+      upset_modify_themes(list("intersections_matrix" = theme(axis.text.y = element_text(size = 15, color = "black"),
+                                                              axis.title.x = element_text(size = 15, color = "black"),
+                                                              panel.grid = element_blank()),
+                               
+                               "intersection_size" = theme(axis.title.y = element_text(size = 16, color = "black"),
+                                                             panel.grid = element_blank()) )) )
+
+DNA_Method_Upset_plot
+
+#ggsave(plot = DNA_Method_Upset_0.1_plot_ComplexUpset, filename = "DNA_method_Upset.png", width = 200, height = 180, units = "mm", dpi = 1800)
+#ggsave(plot = DNA_Method_Upset_0.1_plot_ComplexUpset, filename = "DNA_method_Upset.svg", width = 200, height = 180, units = "mm", dpi = 1800)
+
+
+```
+
+
+### Joint plots
+
+```{r RQ1 - DNA methods - Joined plots - Upset}
+
+DNA_method_plot_layout <- "
+AAABBB
+CCC###
+DDEEFF
+GGGHHH"
+
+#Extract the legend from the bar plot
+DNA_method_bar_plot_legend <- ggpubr::as_ggplot(ggpubr::get_legend(DNA_method_bar_plot))
+
+#Extract the shape legend from the NMDS plots
+DNA_method_ord_plot_1_2_legend <- ggpubr::as_ggplot(ggpubr::get_legend(DNA_method_ord_plot_1_2))
+
+#Extract the color legend from the NMDS plots
+DNA_method_ord_plot_1_3_legend <- ggpubr::as_ggplot(ggpubr::get_legend(DNA_method_ord_plot_1_3))
+
+#Craft the plot
+Figure_2 <- DNA_method_bar_plot + DNA_Method_Upset_plot + DNA_method_bar_plot_legend +
+  DNA_method_ord_plot_1_2 + DNA_method_ord_plot_1_3 + DNA_method_ord_plot_2_3 + 
+  DNA_method_ord_plot_1_2_legend + DNA_method_ord_plot_1_3_legend +
+  #Modify the plot heights
+  plot_layout(design = DNA_method_plot_layout,
+    heights = c(1, 0.1, 1, 0.1) ) + plot_annotation(tag_levels = list(c("A", "B", "", "C", "D", "E", "", ""))) & theme(plot.tag = element_text(size = 20, face = "bold"), legend.position = "none", plot.tag.position = c(0.05, 1))
+
+Figure_2
+
+#ggsave(filename = "Figures/Figure_2.pdf", width = 400, height = 350, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_2.png", width = 400, height = 350, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_2.svg", width = 400, height = 350, units = "mm", dpi = 1800)
+
+
+```
+
+
+## Aim 2 - Species x Location effects
+
+**Assess the effect of three different DNA extraction methods on the reconstructed Symbiodiniaceae communities.**
+
+In order to answer these questions we proceeded to visualize the Genus (DIV) as bar plots, NMDS plots and we evaluated the shared Genus (DIV) between the DNA extraction methods.
+
+### Bar plots
+
+We visualized relative abundance of the post-MED sequences through a stacked bar plot.  
+
+>NOTE: The relative abundance *under* 0.1% was included as the "Others" category
+
+```{r RQ2 - Symbiont changes - Bar plot}
+
+Location_species_bar_plot <- Abundance %>%
+  #Select the PNG Porites samples
+  filter(DNA_method == "PowerSoil_EDTA") %>% 
+  #Create a new DNA_method variable for plotting
+  mutate(DNA_method_plot = factor(x = DNA_method, levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA"), labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA"))) %>%
+  #Create a new species and Location variable for the plot
+  mutate(Location_plot = factor(x = case_when(Location == "PNG" ~ "Papua New Guinea",
+                                   TRUE ~ Location), levels = c("Palau", "Papua New Guinea")),
+         
+         Coral_genus_plot = factor(x = case_when(Coral_genus == "Porites" ~ "*Porites lobata*",
+                                Coral_genus == "Diploastrea" ~ "*Diploastrea heliopora*"),
+                             levels = c("*Porites lobata*", "*Diploastrea heliopora*")),
+         
+         Fragment_label_plot = factor(x = case_when(Fragment_label == "Head" ~ "0",
+                                                    TRUE ~ Fragment_label),
+                                      levels = c("0", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3"),
+                                      labels = c("0", "5", "10", "15", "20", "25", "30", "Anc1", "Anc2", "Anc3")) ) %>%
+  #Select the data for the plot
+  ggplot() +
+  
+  # First geom_col for the fill aesthetic (stacked bars)
+  geom_col(aes(x = Fragment_label_plot, y = Rel_abund_per, 
+               fill = Symbiont_genus_combined_others), 
+           color = NA, show.legend = FALSE) +  # Hide color here to prevent duplication
+  
+  # Second geom_col for the color aesthetic (transparent borders)
+  geom_col(data = Abundance %>%
+  #Select the DNA method
+  filter(DNA_method == "PowerSoil_EDTA") %>%
+  #Create a new DNA_method variable for plotting
+  mutate(DNA_method_plot = factor(x = DNA_method, levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA"), labels = c("PowerSoil Pro", "Decalcification\nPowerSoil Pro", "Decalcification\nAncient DNA")),
+         
+         Symbiont_genus_simp_others_plot = factor(x = case_when(Symbiont_genus_simp_others == "A" ~ "*Symbiodinium*",
+                                                       Symbiont_genus_simp_others == "B" ~ "*Breviolum*",
+                                                       Symbiont_genus_simp_others == "C" ~ "*Cladocopium*",
+                                                       Symbiont_genus_simp_others == "D" ~ "*Durusdinium*",
+                                                       Symbiont_genus_simp_others == "Others" ~ "Others"), levels = c("*Symbiodinium*", "*Breviolum*", "*Cladocopium*", "*Durusdinium*", "Others")),
+         
+         Fragment_label_plot = factor(x = case_when(Fragment_label == "Head" ~ "0",
+                                                    TRUE ~ Fragment_label),
+                                      levels = c("0", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3"),
+                                      labels = c("0", "5", "10", "15", "20", "25", "30", "Anc1", "Anc2", "Anc3")) ) %>%
+    #Create a new species and Location variable for the plot
+  mutate(Location_plot = factor(x = case_when(Location == "PNG" ~ "Papua New Guinea",
+                                   TRUE ~ Location), levels = c("Palau", "Papua New Guinea")),
+         
+         Coral_genus_plot = factor(x = case_when(Coral_genus == "Porites" ~ "*Porites lobata*",
+                                Coral_genus == "Diploastrea" ~ "*Diploastrea heliopora*"),
+                             levels = c("*Porites lobata*", "*Diploastrea heliopora*"))) , 
+  
+           aes(x = Fragment_label_plot, y = Rel_abund_per, 
+               color = Symbiont_genus_simp_others_plot), 
+           fill = NA, alpha = 0, show.legend = TRUE) +
+  
+  #Include the scale_manual
+  scale_fill_manual(values = setNames(as.character(subset(x = Abundance, subset = DNA_method == "PowerSoil_EDTA")$Symbiont_genus_color_others), as.character(subset(x = Abundance, subset = DNA_method == "PowerSoil_EDTA")$Symbiont_genus_combined_others))) +
+  #Include the colors
+  scale_color_manual(values = c("transparent", "transparent", "transparent", "transparent", "transparent"),  name = "Symbiodiniaceae genus") +
+  #Change the legend
+  guides(fill = "none", 
+          color = guide_legend(override.aes = list(
+    fill = c("#a5822d", "#3d8590", "#91467f", "#408e5e", "#bbbbbb"),
+    color = c("#a5822d", "#3d8590", "#91467f", "#408e5e", "#bbbbbb"),
+    alpha = 1)) )  +
+  #Include facets
+  facet_grid(rows = vars(Coral_genus_plot), cols = vars(Location_plot), scales = "free") + 
+  #Include a vertical line to indicate the ancient samples
+  geom_vline(xintercept = 7.5, linetype = "dashed", linewidth = 0.7, color = "darkgray") +
+  #Include plot title
+  labs(x = "Fragment age (Years)", y = "Relative abundance") + 
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    axis.text.x = element_text(color = "white", size = 1), #Before size = 10
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(color = "black", size = 18), #Before size = 12
+    axis.title.y = element_text(color = "black", size = 18), #Before size = 13
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = ggtext::element_markdown(color = "black", size = 18), #Before size = 12
+    #Change the legend
+    legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 14
+    legend.text = ggtext::element_markdown(color = "black", size = 15), #Before size = 13
+    legend.position = "bottom",
+    #Include tags
+    plot.tag = element_text(face = "bold", size = 16),
+    plot.tag.location = "plot"
+    )
+
+Location_species_bar_plot
+
+#ggsave(filename = "Location_species_bar_plot.png", width = 200, height = 200, units = "mm", dpi = 1500)
+
+```
+
+
+>NOTE: This plot will be combined with the Bleaching alert data explored in Aim 3
+
+
+### NMDS plots
+
+To visualize the community structure we performed a NMDS based on Bray-Curtis distances of the post-MED sequences.     
+
+>NOTE: We filtered the relative abundance under 0.1%
+
+```{r RQ2 - Location x Species - NMDS - All together}
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+Location_species_ord_all <- metaMDS(comm = Abundance %>% filter(DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray", k = 3)
+
+#Extract the data
+Location_species_ord_all_data <- as.data.frame(scores(Location_species_ord_all)$sites)
+
+##Include the metadata
+Location_species_ord_all_data <- Location_species_ord_all_data %>%
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(
+    
+         Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+    
+         
+         Coral_genus_fill_aes = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c(21, 24)),
+         
+         
+         #DNA extraction method
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+         
+         Location_shape_aes = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG"), labels = c(21,24)),
+         
+         
+         #Number asociated with each fragment
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110")) )
+
+#_____________________________________
+
+#Assign colors
+
+Location_species_ord_all_data_colors <- ggnested::extract_palette(  Location_species_ord_all_data %>% ggnested::ggnested(aes(x = NMDS1, y = NMDS2, fill = Coral_genus, main_group = Coral_genus, sub_group = Fragment_age), main_palette = c("#0077b6", "#780000"), gradient_type = "tints") +  geom_point(aes(shape = Location), size = 10) + scale_shape_manual(values = c(21, 24)) + geom_text(aes(label = Fragment_age), color = "white",  fontface = "bold") + labs(title = "Palau - Porites - Rel abund over 0.1%", subtitle = paste("Bray-Curtis distance, Stress: ", signif(Location_species_ord_all$stress, 3))) + theme(panel.grid = element_blank(), panel.background = element_rect(fill = "white",  color = "black"), legend.position = "bottom") ) %>%
+  #Obtain unique columns for Coral_genus DIV and Symbiont_genus_simp
+  separate(col = group_subgroup, into = c("Coral_genus", "Fragment_age"), sep = " - ", remove = F) %>%
+  #Rename variables
+  rename(Coral_genus_Frag_age = group_subgroup, Coral_genus_color = group_colour, Fragment_age_color = subgroup_colour) %>%
+  #Modify the Fragment age variable to change the head as white
+  mutate(Fragment_age_color = case_when(Coral_genus_Frag_age == "Porites - 0" ~ "white", #"#D8F1FF"
+                                        Coral_genus_Frag_age == "Porites - 5" ~ "#C0E5FA",
+                                        Coral_genus_Frag_age == "Porites - 10" ~ "#A7DAF5",
+                                        Coral_genus_Frag_age == "Porites - 15" ~ "#90CEF0",
+                                        Coral_genus_Frag_age == "Porites - 20" ~ "#78C3EB",
+                                        Coral_genus_Frag_age == "Porites - 25" ~ "#60B7E6",
+                                        Coral_genus_Frag_age == "Porites - 30" ~ "#48ACE1",
+                                        Coral_genus_Frag_age == "Porites - 80" ~ "#30A0DC",
+                                        Coral_genus_Frag_age == "Porites - 85" ~ "#1895D7",
+                                        Coral_genus_Frag_age == "Porites - 90" ~ "#008AD3",
+                                        
+                                        Coral_genus_Frag_age == "Diploastrea - 0" ~ "white", #"#FFD2D2"
+                                        Coral_genus_Frag_age == "Diploastrea - 5" ~ "#F3BABA",
+                                        Coral_genus_Frag_age == "Diploastrea - 10" ~ "#E8A3A3",
+                                        Coral_genus_Frag_age == "Diploastrea - 15" ~ "#DD8B8B",
+                                        Coral_genus_Frag_age == "Diploastrea - 20" ~ "#D27474",
+                                        Coral_genus_Frag_age == "Diploastrea - 25" ~ "#C75D5D",
+                                        Coral_genus_Frag_age == "Diploastrea - 30" ~	"#BC4545",
+                                        Coral_genus_Frag_age == "Diploastrea - 100" ~	"#B12E2E",
+                                        Coral_genus_Frag_age == "Diploastrea - 105" ~	"#A61717",
+                                        Coral_genus_Frag_age == "Diploastrea - 110" ~	"#9B0000"))
+
+#_____________________________________
+
+#Plot the nMDS
+
+#NMDS1 - NMDS2
+
+Location_species_ord_all_plot <- left_join(Location_species_ord_all_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age")) %>%
+  #Include new variable for plotting
+  unite(col = "Location_genus", Location, Coral_genus, sep = "_", remove = F) %>%
+  #Include plotting variables
+  mutate(Location_plot = factor(x = Location, levels = c("Palau", "PNG"), labels = c("Palau", "Papua New Guinea")),
+         Facet_label = "All data") %>%
+  #Select the data for plotting
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus_Frag_age, shape = Location_plot, color = Coral_genus_Frag_age), size = 10, show.legend = T, stroke = 1.5) + 
+  #Include the shape selection
+  scale_shape_manual(values = c(21, 24), name = "Sampling\nLocation") + 
+  #Include the elipses
+  stat_ellipse(aes(color = Location_genus), linetype = "dashed", show.legend = F,
+               #color = c("#0077b6", "#780000")
+               ) + 
+  #Include the color selection
+  scale_fill_manual(values = setNames(as.character(left_join(Location_species_ord_all_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Fragment_age_color), as.character(left_join(Location_species_ord_all_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age)) ) +
+  #Include the color selection for borders
+  scale_color_manual(values = setNames(left_join(Location_species_ord_all_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_color, left_join(Location_species_ord_all_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age) ) +
+  #Choose which legends appear
+  guides(color = "none",
+         fill = "none") +
+    #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.35, y = 0.8, label = paste("3D-Stress:", signif(Location_species_ord_all$stress, 3)), size = 6) +
+  #Include the Stress value
+#  labs(subtitle = paste("3D-Stress:", signif(Location_species_ord_all$stress, 3))) + 
+  #Include facet grid name
+  facet_grid(cols = vars(Facet_label)) +
+  #Modify the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        #Modify the caption size
+        plot.subtitle = element_text(size = 16),
+        #Modify the axis text
+        axis.text = element_text(size = 16, color = "black"),
+        axis.title = element_text(size = 16, color = "black"),
+        #Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = element_text(color = "black", size = 16), #Before size = 12
+        #Include tags
+        plot.tag = element_text(face = "bold", size = 20),
+        plot.tag.location = "plot",
+        #Change the color of the facet label
+        strip.background = element_rect(fill = "white", color = "black"),
+        #Increase facet label text size
+        strip.text = ggtext::element_markdown(color = "black", size = 18)
+        )
+
+
+Location_species_ord_all_plot
+
+
+```
+
+
+```{r RQ2 - Location x Species - NMDS}
+
+#Palau
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+Palau_ord <- metaMDS(comm = Abundance %>% filter(Location == "Palau" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray")
+
+#Extract the data
+Palau_ord_data <- as.data.frame(scores(Palau_ord)$sites) %>%
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+    
+         
+         Coral_genus_fill_aes = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c(21, 24)),
+         
+         
+         #DNA extraction method
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+         
+         Location_shape_aes = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG"), labels = c(21,24)),
+         
+         
+         #Number asociated with each fragment
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110")) )
+
+#_____________________________________
+
+#Plot the nMDS
+
+Palau_ord_plot <- left_join(Palau_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age")) %>%
+  #Select the data for plotting
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus_Frag_age, color = Coral_genus), shape = 21, size = 8, show.legend = F, stroke = 1.5) +
+  #Include the elipses
+  stat_ellipse(aes(color = Coral_genus), linetype = "dashed", show.legend = F,
+               #color = c("#0077b6", "#780000")
+               ) + 
+  #Include the color selection
+  scale_fill_manual(values = setNames(
+    left_join(Palau_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Fragment_age_color, 
+    left_join(Palau_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age)) +
+  #Include the color selection
+  scale_color_manual(values = setNames(
+    left_join(Palau_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_color, 
+    left_join(Palau_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus)) +
+  #Include facet for the title
+  facet_grid(cols = vars(Location)) +
+  #Include the Stress value
+  labs(x = NULL
+    #subtitle = paste("2D-Stress:", signif(Palau_ord$stress, 3))
+    ) + 
+  #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.25, y = 0.8, label = paste("2D-Stress:", signif(Palau_ord$stress, 3)), size = 6) +
+  #Modify the theme
+  theme(panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white",  color = "black"),
+      #Modify the caption size
+      plot.subtitle = element_text(size = 16),
+      #Modify the axis text
+      axis.text = element_text(size = 16, color = "black"),
+      axis.title = element_text(size = 16, color = "black"),
+      #Modify the legend elements
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "white", color = "white"),
+      legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+      legend.text = element_text(color = "black", size = 16), #Before size = 12
+      #Change the color of the facet label
+      strip.background = element_rect(fill = "white", color = "black"),
+      #Increase facet label text size
+      strip.text = ggtext::element_markdown(color = "black", size = 18)
+      )
+
+Palau_ord_plot
+
+#________________________________________________________________________________________
+
+#PNG
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+PNG_ord <- metaMDS(comm = Abundance %>% filter(Location == "PNG" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray")
+
+#Extract the data
+PNG_ord_data <- as.data.frame(scores(PNG_ord)$sites) %>%
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+    
+         
+         Coral_genus_fill_aes = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c(21, 24)),
+         
+         
+         #DNA extraction method
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG"), labels = c("Palau", "Papua New Guinea")),
+         
+         
+         Location_shape_aes = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "Papua New Guinea",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "Papua New Guinea",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Papua New Guinea"), levels = c("Palau", "Papua New Guinea"), labels = c(21,24)),
+         
+         
+         #Number asociated with each fragment
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110")) )
+
+#_____________________________________
+
+#Plot the nMDS
+
+PNG_ord_plot <- left_join(PNG_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age")) %>%
+  #Select the data for plotting
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus_Frag_age, color = Coral_genus), shape = 24, size = 8, show.legend = F, stroke = 1.5) +
+  #Include the elipses
+  stat_ellipse(aes(color = Coral_genus), linetype = "dashed", show.legend = F,
+               #color = c("#0077b6", "#780000")
+               ) + 
+  #Include the color selection
+  scale_fill_manual(values = setNames(
+    left_join(PNG_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Fragment_age_color, 
+    left_join(PNG_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age)) +
+  #Include the color selection
+  scale_color_manual(values = setNames(
+    left_join(PNG_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_color, 
+    left_join(PNG_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus)) +
+  #Include facet for the title
+  facet_grid(cols = vars(Location)) +
+  #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.1, y = 0.8, label = paste("2D-Stress:", signif(PNG_ord$stress, 3)), size = 6) +
+  #Modify the axis titles
+  labs(y = NULL, x = NULL
+    #subtitle = paste("2D-Stress:", signif(PNG_ord$stress, 3))
+    ) + 
+  #Modify the theme
+  theme(panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white", color = "black"),
+      #Modify the caption size
+      plot.subtitle = element_text(size = 16),
+      #Modify the axis text
+      axis.text = element_text(size = 16, color = "black"),
+      axis.title = element_text(size = 16, color = "black"),
+      #Modify the legend elements
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "white", color = "white"),
+      legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+      legend.text = element_text(color = "black", size = 16), #Before size = 12
+      #Change the color of the facet label
+      strip.background = element_rect(fill = "white", color = "black"),
+      #Increase facet label text size
+      strip.text = ggtext::element_markdown(color = "black", size = 18)
+      )
+
+PNG_ord_plot
+
+#________________________________________________________________________________________
+
+#Porites
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+Porites_ord <- metaMDS(comm = Abundance %>% filter(Coral_genus == "Porites" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray")
+
+#Extract the data
+Porites_ord_data <- as.data.frame(scores(Porites_ord)$sites) %>%
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+
+         Coral_genus_2 = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c("*P. lobata*", "*D. heliopora*")),
+         
+         Coral_genus_fill_aes = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c(21, 24)),
+         
+         
+         #DNA extraction method
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+         
+         Location_shape_aes = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG"), labels = c(21,24)),
+         
+         
+         #Number asociated with each fragment
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110")) )
+
+#_____________________________________
+
+#Plot the nMDS
+
+Porites_ord_plot <- left_join(Porites_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age")) %>%
+  #Select the data for plotting
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus_Frag_age, shape = Location, color = Coral_genus), size = 8, show.legend = F, stroke = 1.5) +
+  #Include the shape selection
+  scale_shape_manual(values = c(21, 24)) + 
+  #Include the elipses
+  stat_ellipse(aes(color = Location), linetype = "dashed", show.legend = F,
+               #color = c("#0077b6", "#780000")
+               ) + 
+  #Include the color selection
+  scale_fill_manual(values = setNames(
+    left_join(Porites_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Fragment_age_color, 
+    left_join(Porites_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age)) +
+  #Include the color selection
+  scale_color_manual(values = setNames(
+    left_join(Porites_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_color, 
+    left_join(Porites_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus)) +
+  #Include facet for the title
+  facet_grid(cols = vars(Coral_genus_2)) +
+    #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.07, y = 0.9, label = paste("2D-Stress:", signif(Porites_ord$stress, 3)), size = 6) +
+  #Include the Stress value
+  labs(
+    #subtitle = paste("2D-Stress:", signif(Porites_ord$stress, 3))
+    ) + 
+  #Modify the theme
+  theme(panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white",  color = "black"),
+      #Modify the caption size
+      plot.subtitle = element_text(size = 16),
+      #Modify the axis text
+      axis.text = element_text(size = 16, color = "black"),
+      axis.title = element_text(size = 16, color = "black"),
+      #Modify the legend elements
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "white", color = "white"),
+      legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+      legend.text = element_text(color = "black", size = 16), #Before size = 12
+      #Change the color of the facet label
+      strip.background = element_rect(fill = "white", color = "black"),
+      #Increase facet label text size
+      strip.text = ggtext::element_markdown(color = "black", size = 18)
+      )
+
+Porites_ord_plot
+
+#________________________________________________________________________________________
+
+#Diplo
+
+#Create the datasets
+
+#Ordination
+##Set the random seed
+set.seed(15081998)
+Diplo_ord <- metaMDS(comm = Abundance %>% filter(Coral_genus == "Diploastrea" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% column_to_rownames(var = "Sample_name"), dist = "bray")
+
+#Extract the data
+Diplo_ord_data <- as.data.frame(scores(Diplo_ord)$sites) %>%
+  #Include sample names
+  rownames_to_column(var = "Sample_name") %>%
+  #Include the Location, Species and DNA_Method
+  mutate(Coral_genus = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+
+         Coral_genus_2 = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c("*P. lobata*", "*D. heliopora*")),
+         
+         Coral_genus_fill_aes = factor(x = case_when(grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea"), labels = c(21, 24)),
+         
+         
+         #DNA extraction method
+         DNA_method = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PowerSoil",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PowerSoil_EDTA",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "Ancient_DNA"), levels = c("PowerSoil", "PowerSoil_EDTA", "Ancient_DNA")),
+         
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+         
+         Location_shape_aes = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG"), labels = c(21,24)),
+         
+         
+         #Number asociated with each fragment
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3")),
+         
+         #Fragment age
+         Fragment_age = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "0",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "10",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "15",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "20",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "25",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "30",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "80",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "85",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "90",
+                                           grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "100",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "105",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "110"), levels = c("0", "5", "10", "15", "20", "25", "30", "80", "85", "90", "100", "105", "110")) )
+
+#_____________________________________
+
+#Plot the nMDS
+
+Diplo_ord_plot <- left_join(Diplo_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age")) %>%
+  #Select the data for plotting
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus_Frag_age, shape = Location, color = Coral_genus), size = 8, show.legend = F, stroke = 1.5) +
+  #Include the shape selection
+  scale_shape_manual(values = c(21, 24)) + 
+  #Include the elipses
+  stat_ellipse(aes(color = Location), linetype = "dashed", show.legend = F,
+               #color = c("#0077b6", "#780000")
+               ) + 
+  #Include the color selection
+  scale_fill_manual(values = setNames(
+    left_join(Diplo_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Fragment_age_color, 
+    left_join(Diplo_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_Frag_age)) +
+  #Include the color selection
+  scale_color_manual(values = setNames(
+    left_join(Diplo_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus_color, 
+    left_join(Diplo_ord_data, Location_species_ord_all_data_colors, by = c("Coral_genus", "Fragment_age"))$Coral_genus)) +
+  #Include facet for the title
+  facet_grid(cols = vars(Coral_genus_2)) +
+  #Include the Stress inside the plot
+  annotate(geom = "text", x = -0.2, y = 0.9, label = paste("2D-Stress:", signif(Diplo_ord$stress, 3)), size = 6) +
+  #Include the Stress value
+  labs(y = NULL
+    #subtitle = paste("2D-Stress:", signif(Diplo_ord$stress, 3))
+    ) + 
+  #Modify the theme
+  theme(panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white",  color = "black"),
+      #Modify the caption size
+      plot.subtitle = element_text(size = 16),
+      #Modify the axis text
+      axis.text = element_text(size = 16, color = "black"),
+      axis.title = element_text(size = 16, color = "black"),
+      #Modify the legend elements
+      legend.position = "bottom",
+      legend.key = element_rect(fill = "white", color = "white"),
+      legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+      legend.text = element_text(color = "black", size = 16), #Before size = 12
+      #Change the color of the facet label
+      strip.background = element_rect(fill = "white", color = "black"),
+      #Increase facet label text size
+      strip.text = ggtext::element_markdown(color = "black", size = 18)
+      )
+
+Diplo_ord_plot
+
+
+```
+
+
+```{r RQ2 - NMDS mock data - Legends for Genus and Frag}
+
+NMDS_mock_data <- data.frame(Coral_genus = factor(x = c(rep(x = "Porites", times = 10), rep(x = "Diploastrea", times = 10)), levels = c("Porites", "Diploastrea")),
+                             
+                             Coral_genus_color = c(rep(x = "#0077b6", 10), rep(x = "#780000", 10)),
+                             
+                             Fragment_age = factor(x = rep(x = c(as.character(seq(from = 0, to = 30, by = 5)), "Anc1", "Anc2", "Anc3"), 2), levels = c(as.character(seq(from = 0, to = 30, by = 5)), "Anc1", "Anc2", "Anc3")),
+                              
+                             Fragment_age_color = c("#FFFFFF", "#DCDCDC", "#CECECE", "#BFBFBF", "#B1B1B1", "#A2A2A2", "#949494", "#858585", "#777777", "#696969"))
+
+#____________________________________________________________________________________
+
+#Long format legends
+
+#Create legend for Coral_genus
+##Plot the data
+NMDS_mock_data_Coral_genus <- NMDS_mock_data %>%
+  #Select the data for plotting
+  ggplot(aes(Coral_genus, Fragment_age)) +
+  #Select the type of plot
+  geom_point(aes(fill = Coral_genus), shape = 21, size = 10, stroke = 1.5) +
+  #Set the color scale
+  scale_fill_manual(values = c("Porites" = "#0077b6", "Diploastrea" = "#780000"), labels = c("*Porites<br>lobata*", "*Diploastrea<br>heliopora*")) + 
+  #Modify the theme
+  theme(#Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = ggtext::element_markdown(color = "black", size = 16) #Before size = 12
+        )
+
+
+
+NMDS_mock_data_Shape <- NMDS_mock_data %>%
+  #Select the data for plotting
+  ggplot(aes(Coral_genus, Fragment_age)) +
+  #Select the type of plot
+  geom_point(aes(shape = Coral_genus), size = 10, stroke = 1.5) +
+  #Set the color scale
+  scale_shape_manual(values = c("Porites" = 21, "Diploastrea" = 24), labels = c("Palau", "Papua New Guinea"), name = "Sampling\nLocation") + 
+  #Modify the theme
+  theme(#Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = ggtext::element_markdown(color = "black", size = 16) #Before size = 12
+        )
+
+
+NMDS_mock_data_Fragment_age <- NMDS_mock_data %>%
+  #Select the data for plotting
+  ggplot(aes(Coral_genus, Fragment_age)) +
+  #Select the type of plot
+  geom_point(aes(fill = Fragment_age), shape = 21, size = 10, stroke = 1.5) +
+  #Set the color scale
+  scale_fill_manual(values = setNames(NMDS_mock_data$Fragment_age_color, NMDS_mock_data$Fragment_age), name = "Fragment\nage") + 
+  #Create legend for Fragment_age
+  guides(fill = guide_legend(nrow = 1,
+                             theme = theme(legend.byrow = T))) +
+  #Modify the theme
+  theme(#Modify the legend elements
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.text.position = "bottom", 
+        legend.title = element_text(color = "black", size = 16, hjust = 0.5), #Before size = 12
+        legend.text = ggtext::element_markdown(color = "black", size = 16) #Before size = 12
+        )
+
+```
+
+
+```{r RQ2 - Location x Species - NMDS - Joined}
+
+#Define the layout
+NMDS_species_location_plot_layout <- "
+AABC
+AADE
+FFGG
+HHHH"
+
+#Extract the legend for shape
+Location_species_ord_all_plot_legend_shape  <- ggpubr::as_ggplot(ggpubr::get_legend(NMDS_mock_data_Shape))
+
+#Extract the legend for Coral_genus
+Location_species_ord_all_plot_legend_genus <- ggpubr::as_ggplot(ggpubr::get_legend(NMDS_mock_data_Coral_genus))
+
+#Extract the legend for Location
+Location_species_ord_all_plot_legend_frag_age <- ggpubr::as_ggplot(ggpubr::get_legend(NMDS_mock_data_Fragment_age))
+
+
+Figure_3 <- Location_species_ord_all_plot + Palau_ord_plot + PNG_ord_plot + Porites_ord_plot + Diplo_ord_plot + Location_species_ord_all_plot_legend_shape + Location_species_ord_all_plot_legend_genus + Location_species_ord_all_plot_legend_frag_age +
+  #Include the design
+  plot_layout(design = NMDS_species_location_plot_layout, heights = c(1, 1, 0.2, 0.2)) +
+  #Include tags
+  plot_annotation(tag_levels = list(c("A", "B", "C", "D", "E", "", "", ""))) & theme(plot.tag = element_text(size = 20, face = "bold"), legend.position = "none", plot.tag.position = c(0.05, 1) )
+
+Figure_3
+
+#ggsave(filename = "Figures/Figure_3.svg", width = 370, height = 250, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_3.pdf", width = 370, height = 250, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_3.png", width = 400, height = 250, units = "mm", dpi = 1000)
+
+
+```
+
+
+### PERMANOVA
+
+We will perform a PERMANOVA and test the assumptions to figure out if there are significantly different or not.
+
+```{r RQ2 - Differences between location and species - PERMANOVA}
+
+#Create the datasets
+##Distance matrix
+Location_species_dist <- vegdist(x = Abundance %>% 
+  #Obtain only Porites for PNG over 0.1%
+  filter(DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% 
+  #Change the data structure: Rows are samples, columns are Post-MED sequences or Coral_genus DIV
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Assign sample names as row names for the vegdist function
+  column_to_rownames(var = "Sample_name"),
+  method = "bray")
+
+##Metadata for distance matrix
+Location_species_dist_metadata <- Abundance %>% 
+  #Obtain only Porites for PNG over 0.1%
+  filter(DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% 
+  #Change the data structure: Rows are samples, columns are Post-MED sequences or Coral_genus DIV
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Create a new metadata column with the DNA_methods
+  mutate(Coral_genus = factor(x = case_when(
+                           grepl(pattern = "^P", x = Sample_name, ignore.case = T) ~ "Porites",
+                           grepl(pattern = "^D", x = Sample_name, ignore.case = T) ~ "Diploastrea"), levels = c("Porites", "Diploastrea")),
+         
+         #Sampling location
+         Location = factor(x = case_when(grepl(pattern = "B$", x = Sample_name, ignore.case = T) ~ "Palau",
+                              grepl(pattern = "D$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "E$", x = Sample_name, ignore.case = T) ~ "PNG",
+                              grepl(pattern = "F$", x = Sample_name, ignore.case = T) ~ "PNG"), levels = c("Palau", "PNG")),
+         
+         Fragment_label = factor(x = case_when(grepl(pattern = "^[PD]0", x = Sample_name, ignore.case = T) ~ "Head",
+                                           grepl(pattern = "^[PD]1[^678]", x = Sample_name, ignore.case = T) ~ "1",
+                                           grepl(pattern = "^[PD]2[^012]", x = Sample_name, ignore.case = T) ~ "2",
+                                           grepl(pattern = "^[PD]3", x = Sample_name, ignore.case = T) ~ "3",
+                                           grepl(pattern = "^[PD]4", x = Sample_name, ignore.case = T) ~ "4",
+                                           grepl(pattern = "^[PD]5", x = Sample_name, ignore.case = T) ~ "5",
+                                           grepl(pattern = "^[PD]6", x = Sample_name, ignore.case = T) ~ "6",
+                                           grepl(pattern = "P16", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "P17", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "P18", x = Sample_name, ignore.case = T) ~ "Anc3",
+                                            grepl(pattern = "D20", x = Sample_name, ignore.case = T) ~ "Anc1",
+                                           grepl(pattern = "D21", x = Sample_name, ignore.case = T) ~ "Anc2",
+                                           grepl(pattern = "D22", x = Sample_name, ignore.case = T) ~ "Anc3"), levels = c("Head", "1", "2", "3", "4", "5", "6", "Anc1", "Anc2", "Anc3"))) %>%
+  #Assign sample names as row names for the adonis function
+  column_to_rownames(var = "Sample_name")
+
+#_____________________________________________________________________________
+
+#Run the PERMANOVA
+
+#Set the random seed
+set.seed(15081998)
+#Run the PERMANOVA - Only for DNA methods
+adonis2(formula = Location_species_dist ~ Location * Coral_genus, data = Location_species_dist_metadata, permutations = 9999, by = "terms")
+
+
+#________________________________________________________________________________________________
+
+#Test for multivariate homogeneity of variances
+##Betadisper - general
+anova(betadisper(Location_species_dist, group = with(Location_species_dist_metadata, interaction(Location, Coral_genus)) ))
+##Betadisper based on permutations
+set.seed(15081998)
+permutest(betadisper(Location_species_dist, group = with(Location_species_dist_metadata, interaction(Location, Coral_genus)) ))
+##Pairwise betadisper
+TukeyHSD(betadisper(Location_species_dist, group = with(Location_species_dist_metadata, interaction(Location, Coral_genus)) ))
+
+#________________________________________________________________________________________________
+
+#Posthoc PERMANOVA
+set.seed(15081998)
+pairwise.adonis(x = Location_species_dist, factors = with(Location_species_dist_metadata, interaction(Location, Coral_genus)))
+
+
+
+```
+
+### Distance-Decay plot
+
+```{r RQ2 - Distance-Decay plot - Palau - Porites - Decade}
+
+#Community
+
+#Create the dataset
+Palau_Porites_decade <- Abundance %>%
+  #Filter to obtain Porites from Palau
+  filter(Location == "Palau", Coral_genus == "Porites" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>% 
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Change the data structure
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name")
+
+#Compute the distances
+Palau_Porites_decade_dist <- as.vector(1 - vegdist(x = Palau_Porites_decade, method = "bray"))
+
+#___________________________________________________________________________________
+
+# Core distance
+
+#Create the dataset
+Palau_Porites_decade_core <- Abundance %>%
+  #Filter to obtain Porites from Palau
+  filter(Location == "Palau", Coral_genus == "Porites" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>%
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Select only the unique core names and ages
+  distinct(Sample_name, Fragment_age) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name") %>%
+  #Change to numeric variable
+  mutate(Fragment_age = as.numeric(as.character(Fragment_age)))
+
+
+#Compute the distances for the cores
+Palau_Porites_decade_core_dist <- as.vector(vegdist(x = Palau_Porites_decade_core, method = "euclidean"))
+
+#___________________________________________
+
+#Create a dataframe
+Palau_Porites_decade_dist_decay_data <- data.frame(Core_distance = Palau_Porites_decade_core_dist, Community_sim = Palau_Porites_decade_dist)
+
+
+#Create the lineal model
+Palau_Porites_decade_dist_decay_lm <- lm(formula = Community_sim ~ Core_distance, data = Palau_Porites_decade_dist_decay_data)
+#Get summary of the lm model
+Palau_Porites_decade_dist_decay_lm_sum <- summary(Palau_Porites_decade_dist_decay_lm)
+#View the summary
+Palau_Porites_decade_dist_decay_lm_sum
+
+#Compute a Mantel test
+##Pearson correlation
+###Set the random seed
+set.seed(15081998)
+mantel(xdis = (1 - vegdist(x = Palau_Porites_decade, method = "bray")), 
+       ydis = vegdist(x = Palau_Porites_decade_core, method = "euclidean"), 
+       method = "pearson", 
+       permutations = 999)
+
+#Plot the data
+Palau_Porites_decade_dist_decay <- Palau_Porites_decade_dist_decay_data  %>%
+  #Select the data
+  ggplot(aes(x = Core_distance, y = Community_sim)) +
+  #Select the type of plot
+  geom_point(shape = 21, size = 8, fill = "#0077b6", alpha = 0.7) + 
+  #Include the regresion line
+  geom_smooth(method = "lm", se = F, linewidth = 2, color = "darkgoldenrod3") + 
+  #Include the adj p-value and Adj R-squares
+  annotate(geom = "text", x = 23, y = 0.18, label = paste0("atop('Slope: ", signif(Palau_Porites_decade_dist_decay_lm$coefficients["Core_distance"], 3), "', 'Adj R'^2=='", signif(Palau_Porites_decade_dist_decay_lm_sum$adj.r.squared, 3), "')"), size = 6, parse = T) + 
+  #Change the labels
+  labs(x = NULL, y = "Community similarity") +
+  #labs(x = "Time between Fragments (Years)", y = "Community similarity") +
+  #Include x axis breaks
+  scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        axis.text.x = element_text(size = 1, color = "white"),
+        axis.text.y = element_text(size = 18, color = "black"),
+        axis.title = element_text(size = 18, color = "black"),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 12),
+        legend.text = element_text(color = "black", size = 12))
+  
+Palau_Porites_decade_dist_decay  
+
+```
+
+
+```{r RQ2 - Distance-Decay plot - Palau - Diplo - Decade}
+
+#Community
+
+#Create the dataset
+Palau_Diplo_decade <- Abundance %>%
+  #Filter to obtain Porites from Palau
+  filter(Location == "Palau", Coral_genus == "Diploastrea" & Rel_abund_per > 0.1) %>% 
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Change the data structure
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name")
+
+#Compute the distances
+Palau_Diplo_decade_dist <- as.vector(1 - vegdist(x = Palau_Diplo_decade, method = "bray"))
+
+#___________________________________________________________________________________
+
+# Core distance
+
+#Create the dataset
+Palau_Diplo_decade_core <- Abundance %>%
+  #Filter to obtain Porites from Palau
+  filter(Location == "Palau", Coral_genus == "Diploastrea" & Rel_abund_per > 0.1) %>%
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Select only the unique core names and ages
+  distinct(Sample_name, Fragment_age) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name") %>%
+  #Change to numeric variable
+  mutate(Fragment_age = as.numeric(as.character(Fragment_age)))
+
+
+#Compute the distances for the cores
+Palau_Diplo_decade_core_dist <- as.vector(vegdist(x = Palau_Diplo_decade_core, method = "euclidean"))
+
+#___________________________________________
+
+#Create a dataframe
+Palau_Diplo_decade_dist_decay_data <- data.frame(Core_distance = Palau_Diplo_decade_core_dist, Community_sim = Palau_Diplo_decade_dist)
+
+
+#Create the lineal model
+Palau_Diplo_decade_dist_decay_lm <- lm(formula = Community_sim ~ Core_distance, data = Palau_Diplo_decade_dist_decay_data)
+#Get summary of the lm model
+Palau_Diplo_decade_dist_decay_lm_sum <- summary(Palau_Diplo_decade_dist_decay_lm)
+#View the summary
+Palau_Diplo_decade_dist_decay_lm_sum
+
+#Mantel test
+###Set the random seed
+set.seed(15081998)
+mantel(xdis = (1 - vegdist(x = Palau_Diplo_decade, method = "bray")), 
+       ydis = vegdist(x = Palau_Diplo_decade_core, method = "euclidean"), 
+       method = "pearson", 
+       permutations = 999)
+
+#Plot the data
+Palau_Diplo_decade_dist_decay <- Palau_Diplo_decade_dist_decay_data %>%
+  #Select the data
+  ggplot(aes(x = Core_distance, y = Community_sim)) +
+  #Select the type of plot
+  geom_point(shape = 21, size = 8, fill = "#780000", alpha = 0.7) + 
+  #Include the regresion line
+  geom_smooth(method = "lm", se = F, linewidth = 2, color = "darkgoldenrod3") + 
+  #Include the adj p-value and Adj R-squares
+  annotate(geom = "text", x = 23, y = 0.25, label = paste0("atop('Slope: ", signif(Palau_Diplo_decade_dist_decay_lm$coefficients["Core_distance"], 3), "', 'Adj R'^2=='", signif(Palau_Diplo_decade_dist_decay_lm_sum$adj.r.squared, 3), "')"), size = 6, parse = T) + 
+  #Change the labels
+  labs(x = "Time between Fragments (years)", y = "Community similarity") +
+  #Include x axis breaks
+  scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        axis.text = element_text(size = 18, color = "black"),
+        axis.title = element_text(size = 18, color = "black"),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 12),
+        legend.text = element_text(color = "black", size = 12))
+
+Palau_Diplo_decade_dist_decay  
+
+```
+
+
+```{r RQ2 - Distance-Decay plot - PNG - Porites - Decade}
+
+#Community
+
+#Create the dataset
+PNG_Porites_decade <- Abundance %>%
+  #Filter to obtain Porites from PNG
+  filter(Location == "PNG", Coral_genus == "Porites" & DNA_method == "PowerSoil_EDTA", Rel_abund_per > 0.1) %>% 
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Change the data structure
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name")
+
+#Compute the distances
+PNG_Porites_decade_dist <- as.vector(1 - vegdist(x = PNG_Porites_decade, method = "bray"))
+
+#___________________________________________________________________________________
+
+# Core distance
+
+#Create the dataset
+PNG_Porites_decade_core <- Abundance %>%
+  #Filter to obtain Porites from PNG
+  filter(Location == "PNG", Coral_genus == "Porites" & DNA_method == "PowerSoil_EDTA" & Rel_abund_per > 0.1) %>%
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  
+  #Select only the unique core names and ages
+  distinct(Sample_name, Fragment_age) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name") %>%
+  #Change to numeric variable
+  mutate(Fragment_age = as.numeric(as.character(Fragment_age)))
+
+
+#Compute the distances for the cores
+PNG_Porites_decade_core_dist <- as.vector(vegdist(x = PNG_Porites_decade_core, method = "euclidean"))
+
+#___________________________________________
+
+#Create a dataframe
+PNG_Porites_decade_dist_decay_data <- data.frame(Core_distance = PNG_Porites_decade_core_dist, Community_sim = PNG_Porites_decade_dist)
+
+
+#Create the lineal model
+PNG_Porites_decade_dist_decay_lm <- lm(formula = Community_sim ~ Core_distance, data = PNG_Porites_decade_dist_decay_data)
+#Get summary of the lm model
+PNG_Porites_decade_dist_decay_lm_sum <- summary(PNG_Porites_decade_dist_decay_lm)
+#View the summary
+PNG_Porites_decade_dist_decay_lm_sum
+
+
+#Mantel test
+###Set the random seed
+set.seed(15081998)
+mantel(xdis = (1 - vegdist(x = PNG_Porites_decade, method = "bray")), 
+       ydis = vegdist(x = PNG_Porites_decade_core, method = "euclidean"), 
+       method = "pearson", 
+       permutations = 999)
+
+
+
+#Plot the data
+PNG_Porites_decade_dist_decay <- PNG_Porites_decade_dist_decay_data %>%
+  #Select the data
+  ggplot(aes(x = Core_distance, y = Community_sim)) +
+  #Select the type of plot
+  geom_point(shape = 24, size = 8, fill = "#0077b6", alpha = 0.7) + 
+  #Include the regresion line
+  geom_smooth(method = "lm", se = F, linewidth = 2, color = "darkgoldenrod3") + 
+  #Include the adj p-value and Adj R-squares
+  annotate(geom = "text", x = 23, y = 0.12, label = paste0("atop('Slope: ", signif(PNG_Porites_decade_dist_decay_lm$coefficients["Core_distance"], 3), "', 'Adj R'^2=='", signif(PNG_Porites_decade_dist_decay_lm_sum$adj.r.squared, 3), "')"), size = 6, parse = T) + 
+  #Include x axis breaks
+  scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
+  #Change the labels
+  labs(x = NULL, y = "Community similarity") +
+  #labs(x = "Time between Fragments (Years)", y = "Community similarity") +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        axis.text.x = element_text(size = 1, color = "white"),
+        axis.text.y = element_text(size = 18, color = "black"),
+        axis.title = element_text(size = 18, color = "black"),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 12),
+        legend.text = element_text(color = "black", size = 12))
+  
+PNG_Porites_decade_dist_decay 
+
+
+```
+
+
+```{r RQ2 - Distance-Decay plot - PNG - Diplo - Decade}
+
+#Community
+
+#Create the dataset
+PNG_Diplo_decade <- Abundance %>%
+  #Filter to obtain Porites from PNG
+  filter(Location == "PNG", Coral_genus == "Diploastrea" & Rel_abund_per > 0.1) %>% 
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Change the data structure
+  pivot_wider(id_cols = Sample_name, names_from = Symbiont_genus, values_from = Abundance, values_fill = 0) %>% 
+  #Remove sample names
+  column_to_rownames(var = "Sample_name")
+
+#Compute the distances
+PNG_Diplo_decade_dist <- as.vector(1 - vegdist(x = PNG_Diplo_decade, method = "bray"))
+
+#___________________________________________________________________________________
+
+# Core distance
+
+#Create the dataset
+PNG_Diplo_decade_core <- Abundance %>%
+  #Filter to obtain Porites from PNG
+  filter(Location == "PNG", Coral_genus == "Diploastrea" & Rel_abund_per > 0.1) %>%
+  #Filter to obtain only recent samples
+  filter(!grepl(pattern = "Anc", x = Fragment_label)) %>%
+  #Select only the unique core names and ages
+  distinct(Sample_name, Fragment_age) %>%
+  #Remove sample names
+  column_to_rownames(var = "Sample_name") %>%
+  #Change to numeric variable
+  mutate(Fragment_age = as.numeric(as.character(Fragment_age)))
+
+
+#Compute the distances for the cores
+PNG_Diplo_decade_core_dist <- as.vector(vegdist(x = PNG_Diplo_decade_core, method = "euclidean"))
+
+#___________________________________________
+
+#Create a dataframe
+PNG_Diplo_decade_dist_decay_data <- data.frame(Core_distance = PNG_Diplo_decade_core_dist, Community_sim = PNG_Diplo_decade_dist)
+
+
+#Create the lineal model
+PNG_Diplo_decade_dist_decay_lm <- lm(formula = Community_sim ~ Core_distance, data = PNG_Diplo_decade_dist_decay_data)
+#Get summary of the lm model
+PNG_Diplo_decade_dist_decay_lm_sum <- summary(PNG_Diplo_decade_dist_decay_lm)
+#View the summary
+PNG_Diplo_decade_dist_decay_lm_sum
+
+
+
+#Mantel test
+###Set the random seed
+set.seed(15081998)
+mantel(xdis = (1 - vegdist(x = PNG_Diplo_decade, method = "bray")), 
+       ydis = vegdist(x = PNG_Diplo_decade_core, method = "euclidean"), 
+       method = "pearson", 
+       permutations = 999)
+
+
+#Plot the data
+PNG_Diplo_decade_dist_decay <- PNG_Diplo_decade_dist_decay_data %>%
+  #Select the data
+  ggplot(aes(x = Core_distance, y = Community_sim)) +
+  #Select the type of plot
+  geom_point(shape = 24, size = 8, fill = "#780000", alpha = 0.7) + 
+  #Include the regresion line
+  geom_smooth(method = "lm", se = F, linewidth = 2, color = "darkgoldenrod3") + 
+  #Include the adj p-value and Adj R-squares
+    annotate(geom = "text", x = 17.5, y = 0.06, label = paste0("atop('Slope: ", signif(PNG_Diplo_decade_dist_decay_lm$coefficients["Core_distance"], 3), "', 'Adj R'^2=='", signif(PNG_Diplo_decade_dist_decay_lm_sum$adj.r.squared, 3), "')"), size = 6, parse = T) +
+  #Change the labels
+  labs(x = "Time between Fragments (Years)", y = "Community similarity") +
+  #Include x axis breaks
+  scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
+  #Modify y axis limits
+  scale_y_continuous(breaks = c(0.04, 0.08, 0.12)) +
+  #Change the theme
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white",  color = "black"),
+        axis.text = element_text(size = 18, color = "black"),
+        axis.title = element_text(size = 18, color = "black"),
+        legend.position = "bottom",
+        legend.key = element_rect(fill = "white", color = "white"),
+        legend.title = element_text(color = "black", size = 12),
+        legend.text = element_text(color = "black", size = 12))
+  
+PNG_Diplo_decade_dist_decay 
+
+```
+
+
+```{r RQ2 - Distance-Decay plot - All joined - Decade}
+
+Figure_S2 <- (Palau_Porites_decade_dist_decay | PNG_Porites_decade_dist_decay)/(Palau_Diplo_decade_dist_decay | PNG_Diplo_decade_dist_decay) +
+  plot_layout(axes = "collect") + plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(size = 20, face = "bold"), plot.tag.position = c(0.05, 1))
+
+Figure_S2
+
+#ggsave(filename = "Figures/Figure_S2.svg", width = 370, height = 250, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_S2.pdf", width = 300, height = 300, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_S2.png", width = 370, height = 250, units = "mm", dpi = 1500)
+
+```
+
+
+## Aim 3: Dynamics related to past environmental changes   
+
+**Probe differences in the reconstruction dynamics between two massive growing coral species in the context of past potential heat stress events.**    
+
+In order to answer this data, we will start by processing the bleaching data taken from the NOAA Coral Reef Watch
+
+https://coralreefwatch.noaa.gov/product/5km/index.php#data_access
+
+Data download website (as csv): https://pae-paha.pacioos.hawaii.edu/erddap/griddap/dhw_5km.html
+
+Once the data was downloaded as a csv file and joined into one dataframe we proceeded to clean up the data (Separate and filter the dates according to the sampling dates)    
+
+Core Metadata:
+
+|   Core ID  	| Location 	| Sampling date 	| Species 	| Dimensions (cm) 	| Linear extension rate (mm/year) 	|
+|:----------:	|:--------:	|:-------------:	|:-------:	|:---------------:	|:-------------------------------:	|
+|   I23 S2   	|    PNG   	|   2017-11-06  	| Porites 	|    1.8 - 2.0    	|               9.9               	|
+| I23 S2 c18 	|    PNG   	|   2017-11-06  	|  Diplo  	|    0.7 - 0.8    	|               4.1               	|
+| I26 S1 c26 	|   Palau  	|   2018-01-06  	| Porites 	|    1.6 - 3.6    	|               9.4               	|
+| I26 S1 c27 	|   Palau  	|   2018-01-06  	|  Diplo  	|    1.0 - 1.5    	|               5.1               	|
+
+
+```{r RQ3 - NOAA CRW SST - Clean}
+
+
+#Create a Core calcification metadata file
+Core_metadata <- data.frame(Location = c("PNG", "PNG", "Palau", "Palau"),
+                            Sampling_date = c(as.Date("2017-11-06"), as.Date("2017-11-06"), as.Date("2018-01-06"), as.Date("2018-01-06")),
+                            Coral_genus = c("Porites", "Diplo", "Porites", "Diplo"),
+                            Dimension_right_cm = c(1.8, 0.7, 1.6, 1.0),
+                            Dimension_left_cm = c(2.0, 0.8, 3.6, 1.5),
+                            Linear_ext_rate_mm_year = c(9.9, 4.1, 9.4, 5.1)) %>%
+  #Group the data
+  group_by(Location, Sampling_date, Coral_genus, Linear_ext_rate_mm_year) %>%
+  #Calculate the age of the head fragments
+  summarize(Avg_dimension_cm = mean(Dimension_right_cm, Dimension_left_cm),
+         
+         Avg_dimension_mm = Avg_dimension_cm * 10,
+         
+         Fragment_age_years = (Avg_dimension_mm/Linear_ext_rate_mm_year))
+
+Core_metadata
+
+#_________________________________________________________________________________________
+
+#Data for Palau
+
+NOAA_CRW_Palau <- NOAA_CRW %>%
+  #Create new varaibles based on the time variable
+  separate(col = "Time_UTC", into = c("Year", "Month", "Day_time"), sep = "-", remove = F) %>%
+  #Modify the day variable
+  separate(Day_time, into = c("Day", "Time"), sep = "T", remove = T) %>%
+  #Modify the type of data
+  mutate(across(c("Year", "Month", "Day", "Latitude_North", "Longitude_East", "Bleaching_alert_area", "Degree_heating_week_Celsius_Week", "Coral_bleaching_hotspot_Celsius", "SST_Celsius", "SST_Anomaly_Celsius"), .fns = as.numeric)) %>%
+  #Separate date and time info
+  separate(col = "Time_UTC", into = c("Date", "Time"), sep = "T", remove = T) %>%
+  #Modify the variable type
+  mutate(Date = ymd(Date, tz = "UTC")) %>%
+  #Apply the filter
+  filter(Location == "Palau" & Date <= "2018-01-06") %>%
+  #Include  a variable that has the 5 - year intervals per sample
+  mutate(Core_years = case_when(Date <= "2018-01-06" & Date > "2016-01-06" ~ "0",
+                                Date <= "2016-01-06" & Date > "2011-01-06" ~ "5",
+                                Date <= "2011-01-06" & Date > "2006-01-06" ~ "10",
+                                Date <= "2006-01-06" & Date > "2001-01-06" ~ "15",
+                                Date <= "2001-01-06" & Date > "1996-01-06" ~ "20",
+                                Date <= "1996-01-06" & Date > "1991-01-06" ~ "25",
+                                Date <= "1991-01-06" & Date > "1986-01-06" ~ "30"))
+
+#___________________________________________________________________
+
+#Data for PNG
+
+NOAA_CRW_PNG <- NOAA_CRW %>%
+  #Create new varaibles based on the time variable
+  separate(col = "Time_UTC", into = c("Year", "Month", "Day_time"), sep = "-", remove = F) %>%
+  #Modify the day variable
+  separate(Day_time, into = c("Day", "Time"), sep = "T", remove = T) %>%
+  #Modify the type of data
+  mutate(across(c("Year", "Month", "Day", "Latitude_North", "Longitude_East", "Bleaching_alert_area", "Degree_heating_week_Celsius_Week", "Coral_bleaching_hotspot_Celsius", "SST_Celsius", "SST_Anomaly_Celsius"), .fns = as.numeric)) %>%
+  #Separate date and time info
+  separate(col = "Time_UTC", into = c("Date", "Time"), sep = "T", remove = T) %>%
+  #Modify the variable type
+  mutate(Date = ymd(Date, tz = "UTC")) %>%
+  #Apply the filter
+  filter(Location == "PNG" & Date < "2017-11-07")  %>%
+  #Include  a variable that has the 5 - year intervals per sample
+  mutate(Core_years = case_when(Date <= "2017-11-06" & Date > "2015-11-06" ~ "0",
+                                Date <= "2015-11-06" & Date > "2010-11-06" ~ "5",
+                                Date <= "2010-11-06" & Date > "2005-11-06" ~ "10",
+                                Date <= "2005-11-06" & Date > "2000-11-06" ~ "15",
+                                Date <= "2000-11-06" & Date > "1995-11-06" ~ "20",
+                                Date <= "1995-11-06" & Date > "1990-11-06" ~ "25",
+                                Date <= "1990-11-06" & Date > "1985-11-06" ~ "30"))
+
+#___________________________________________________________________
+
+
+NOAA_CRW_clean <- bind_rows(NOAA_CRW_Palau, NOAA_CRW_PNG) %>%
+  #Rename the time period variable
+  rename(Time_period = Time.period) %>%
+  #Change the data format
+  mutate(Date = as.Date(Date))
+
+
+```
+
+Now we will investigate the bleaching alerts
+
+```{r RQ3 - NOAA CRW SST - Number of days with bleaching alerts - Numbers and plots}
+
+#Total number of bleaching alerts per location
+NOAA_CRW_clean %>%
+  #Obtain bleaching alerts 
+  filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>%
+  #Group the data
+  group_by(Location, Bleaching_alert_area) %>%
+  #Obtain the total number of bleaching alerts in the time series
+  summarize(Total_Bleaching_alerts = n())
+
+#Number of bleaching alerts per location and Core_year
+NOAA_CRW_clean %>%
+  #Obtain bleaching alerts 
+  filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>%
+  #Group the data
+  group_by(Location, Core_years, Bleaching_alert_area) %>%
+  #Obtain the total number of bleaching in the time series
+  summarize(Total_Bleaching_alerts = n()) %>%
+  #Ungroup the data
+  ungroup() %>%
+  #Create a new variable for normalization
+  mutate(Bleaching_alert_year_interval = case_when(Core_years == "0" ~ Total_Bleaching_alerts/2,
+                                                   TRUE ~ Total_Bleaching_alerts/5))
+
+  
+  
+#_______________________________________________________________________
+
+#Number of bleaching alerts per location and Core_year
+
+##Joined plot
+
+Bleaching_alert_joined <- NOAA_CRW_clean %>%
+  #Obtain bleaching alerts 
+  filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>%
+  #Group the data
+  group_by(Location, Core_years, Bleaching_alert_area) %>%
+  #Obtain the total number of bleaching in the time series
+  summarize(Total_Bleaching_alerts = n()) %>%
+  #Ungroup the data
+  ungroup() %>%
+  #Include a new variable for the plot
+  mutate(Core_years = factor(x = Core_years, levels = c("0", "5", "10", "15", "20", "25", "30")#, labels = c("2018\n(0)", "2018 9- 2013\n(5)", "2013 - 2008\n(10)", "2008 - 2003\n(15)", "2003 - 1998\n(20)", "1998 - 1993\n(25", "1993 - 1988\n(30)")
+                             ),
+         
+         Bleaching_alert_area = factor(x = Bleaching_alert_area, levels = c("1", "2", "3")),
+         
+         Location_2 = case_when(Location == "PNG" ~ "Papua New Guinea",
+                                TRUE ~ Location)) %>%
+  #Create a new variable for normalization
+  mutate(Bleaching_alert_year_interval = case_when(Core_years == "0" ~ Total_Bleaching_alerts/2,
+                                                   TRUE ~ Total_Bleaching_alerts/5)) %>%
+  #Select the data for plotting
+  ggplot(aes(x = Core_years, y = Bleaching_alert_year_interval, fill = Bleaching_alert_area)) +
+  #Select the type of plot
+  geom_col() +
+  #Change the colors
+  scale_fill_manual(values = c("#ffb703", "#fb8500", "red3"), name = "Bleaching alert") +
+  #Change the x axis breacks
+  scale_x_discrete(limits = c("0", "5", "10", "15", "20", "25", "30", "Anc1", "Anc2", "Anc3")) +
+  #Include a vertical line to indicate the ancient samples
+  geom_vline(xintercept = 7.5, linetype = "dashed", linewidth = 0.7, color = "darkgray") +
+  #Include facets
+  facet_grid(cols = vars(Location_2)) +
+  #Change the axes labels
+    labs(x = "Fragment age (Years)", y = "Days with bleaching\nalerts per years") +
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    #axis.text = element_text(color = "black", size = 16), #Original size = 12
+    axis.title = element_text(color = "black", size = 18), #Original size = 12
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = element_text(color = "black", size = 18), #Original size = 12
+    #Change the legend
+    axis.text.y = element_text(color = "black", size = 18), #Original size = 12
+    axis.text.x = element_text(color = "black", size = 15), #Original size = 9
+    legend.title = element_text(color = "black", size = 18), #Original size = 12
+    legend.key = element_rect(color = "white"),
+    legend.text = element_text(color = "black", size = 18), #Original size = 12
+    legend.position = "bottom"
+    )
+
+
+Bleaching_alert_joined
+
+
+```
+
+
+```{r RQ3 - NOAA CRW SST - Number of days with bleaching alerts - Plot by region, eval=FALSE, include=FALSE}
+
+#Separate - Palau
+
+Bleaching_alert_Palau <- NOAA_CRW_clean %>%
+  #Obtain bleaching alerts 
+  filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>%
+  #Group the data
+  group_by(Location, Core_years, Bleaching_alert_area) %>%
+  #Obtain the total number of bleaching alerts per year
+  summarize(Total_Bleaching_alerts = n()) %>%
+  #ungroup the data
+  ungroup() %>%
+  #Include a new variable for the plot
+  mutate(Core_years = factor(x = Core_years, levels = c("0", "5", "10", "15", "20", "25", "30")#, labels = c("2018\n(0)", "2018 9- 2013\n(5)", "2013 - 2008\n(10)", "2008 - 2003\n(15)", "2003 - 1998\n(20)", "1998 - 1993\n(25", "1993 - 1988\n(30)")
+                             ),
+         
+         Bleaching_alert_area = factor(x = Bleaching_alert_area, levels = c("1", "2", "3")),
+         
+         Location_2 = case_when(Location == "PNG" ~ "Papua New Guinea",
+                                TRUE ~ Location)) %>%
+  #Filter to obtain only Palau
+  filter(Location == "Palau") %>%
+  #Select the data for plotting
+  ggplot(aes(x = Core_years, y = Total_Bleaching_alerts, fill = Bleaching_alert_area)) +
+  #Select the type of plot
+  geom_col() +
+  #Change the colors
+  scale_fill_manual(values = c("#ffb703", "#fb8500", "red3"), name = "Bleaching alert") +
+  #Change the x axis breacks
+  scale_x_discrete(limits = c("0", "5", "10", "15", "20", "25", "30", "Anc1", "Anc2", "Anc3")) +
+  #Include a vertical line to indicate the ancient samples
+  geom_vline(xintercept = 7.5, linetype = "dashed", linewidth = 0.7, color = "darkgray") +
+  #Include facets
+  facet_grid(cols = vars(Location_2)) +
+  #Change the axes labels
+  labs(#x = "Time intervals\n(matching core 5-year core samples)"
+        x = "Fragment age (Years)", y = "Number of days with\nbleaching alerts") +
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black", size = 12),
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = element_text(color = "black", size = 12),
+    #Change the legend
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.text.x = element_text(color = "black", size = 9),
+    legend.title = element_text(color = "black", size = 12),
+    legend.key = element_rect(color = "white"),
+    #legend.position = "bottom"
+    )
+
+Bleaching_alert_Palau
+
+#_______________________________________________________________________
+
+#Separate - PNG
+
+Bleaching_alert_PNG <- NOAA_CRW_clean %>%
+  #Obtain bleaching alerts 
+  filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>%
+  #Group the data
+  group_by(Location, Core_years, Bleaching_alert_area) %>%
+  #Obtain the total number of bleaching alerts per year
+  summarize(Total_Bleaching_alerts = n()) %>%
+  #ungroup the data
+  ungroup() %>%
+  #Include a new variable for the plot
+  mutate(Core_years = factor(x = Core_years, levels = c("0", "5", "10", "15", "20", "25", "30")#, labels = c("2018\n(0)", "2018 9- 2013\n(5)", "2013 - 2008\n(10)", "2008 - 2003\n(15)", "2003 - 1998\n(20)", "1998 - 1993\n(25", "1993 - 1988\n(30)")
+                             ),
+         
+         Bleaching_alert_area = factor(x = Bleaching_alert_area, levels = c("1", "2", "3")),
+         
+         Location_2 = case_when(Location == "PNG" ~ "Papua New Guinea",
+                                TRUE ~ Location)) %>%
+  #Filter to obtain only PNG
+  filter(Location == "PNG") %>%
+  #Select the data for plotting
+  ggplot(aes(x = Core_years, y = Total_Bleaching_alerts, fill = Bleaching_alert_area)) +
+  #Select the type of plot
+  geom_col() +
+  #Change the colors
+  scale_fill_manual(values = c("#ffb703", "#fb8500", "red3"), name = "Bleaching alert") +
+    #Include a vertical line to indicate the ancient samples
+  geom_vline(xintercept = 7.5, linetype = "dashed", linewidth = 0.7, color = "darkgray") +
+  #Change the x axis breacks
+  scale_x_discrete(limits = c("0", "5", "10", "15", "20", "25", "30", "Anc1", "Anc2", "Anc3")) +
+  #Include facets
+  facet_grid(cols = vars(Location_2)) +
+  #Change the axes labels
+  labs(#x = "Time intervals\n(matching core 5-year core samples)"
+        x = "Fragment age (Years)", y = "Number of days with\nbleaching alerts") +
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.text.x = element_text(color = "black", size = 9),
+    axis.title = element_text(color = "black", size = 12),
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = element_text(color = "black", size = 12),
+    #Change the legend
+    legend.text = element_text(color = "black", size = 12),
+    legend.title = element_text(color = "black", size = 12),
+    legend.key = element_rect(color = "white"),
+    #legend.position = "bottom"
+    )
+
+Bleaching_alert_PNG
+
+
+```
+
+
+Once we have the clean data frame we proceeded to plot the time series adding in the bleaching alerts as shaded rectangles
+
+```{r RQ3 - NOAA CRW SST - Plot}
+
+Fig_S4 <- NOAA_CRW_clean %>%
+  #Create a new variable for the plot
+  mutate(Location_plot = case_when(Location == "PNG" ~ "Papua New Guinea", 
+                                   TRUE ~ Location)) %>%
+  #Filter out the non-used data
+  filter(!is.na(Core_years)) %>%
+  #Select the data
+  ggplot(aes(x = Date, y = SST_Celsius)) + 
+  #Select the type of plot
+  geom_line() +
+  #Include bleaching alert
+  geom_rug(aes(x = Date, y = 32, color = Bleaching_alert_area), data = NOAA_CRW_clean %>% filter(Bleaching_alert_area > 0 & !is.na(Core_years)) %>% mutate(Bleaching_alert_area = factor(x = Bleaching_alert_area, levels = c("1", "2", "3"))), size = 3, show.legend = T, sides = "t") + 
+  #Assign the colors
+  scale_color_manual(values = c("#ffb703", "#fb8500", "red3"), name = "Bleaching alert") +
+  #Include to improve visualization
+  geom_rug(aes(x = Date, y = 31, color = Bleaching_alert_area), color = "#ffb703", data = NOAA_CRW_clean %>% filter(Bleaching_alert_area == 1 & !is.na(Core_years)), sides = "t") + 
+  #Include to improve visualization
+  geom_rug(aes(x = Date, y = 31, color = Bleaching_alert_area), color = "#fb8500", data = NOAA_CRW_clean %>% filter(Bleaching_alert_area == 2 & !is.na(Core_years)), size = 3, sides = "t") + 
+  #Include to improve visualization
+  geom_rug(aes(x = Date, y = 31, color = Bleaching_alert_area), color = "red3", data = NOAA_CRW_clean %>% filter(Bleaching_alert_area == 2 & !is.na(Core_years)), size = 3, sides = "t") + 
+  #Include vertical lines indicating the period of each sample
+  ##Palau
+  geom_vline(aes(xintercept = as.Date("2018-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  geom_vline(aes(xintercept = as.Date("2013-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  geom_vline(aes(xintercept = as.Date("2008-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  geom_vline(aes(xintercept = as.Date("2003-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  geom_vline(aes(xintercept = as.Date("1998-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  geom_vline(aes(xintercept = as.Date("1993-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "Palau")) +
+  ##PNG
+  geom_vline(aes(xintercept = as.Date("2017-11-06")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  geom_vline(aes(xintercept = as.Date("2012-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  geom_vline(aes(xintercept = as.Date("2007-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  geom_vline(aes(xintercept = as.Date("2002-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  geom_vline(aes(xintercept = as.Date("1997-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  geom_vline(aes(xintercept = as.Date("1992-01-01")), linetype = "dashed", linewidth = 0.7, color = "darkgray", data = NOAA_CRW_clean %>% mutate(Date = as.Date(Date)) %>% filter(Location == "PNG")) +
+  #Control the axis breaks
+  scale_x_date(breaks = c(as.Date("1987-12-01"), as.Date("1992-01-01"), as.Date("1997-01-01"), as.Date("2002-01-01"), as.Date("2007-01-01"), as.Date("2012-01-01"), as.Date("2018-01-01")), date_labels = "%Y" ) +
+  #Include facets by locations
+  facet_grid(rows = vars(Location), labeller = labeller(Location = c("PNG" = "Papua New Guinea", "Palau" = "Palau"))) + 
+  #Modify axes labels
+  labs(y = "Daily sea surface temperature (°C)", x = "Year") + 
+  #Modify the theme
+  theme(
+    #Eliminate panel grids
+    panel.grid = element_blank(),
+    #Change background color
+    panel.background = element_rect(fill = "white", color = "black"),
+    #Increase axes label text size
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black", size = 12),
+    #Change the color of the facet label
+    strip.background = element_rect(fill = "white", color = "black"),
+    #Increase facet label text size
+    strip.text = element_text(color = "black", size = 12),
+    #Change the legend
+    legend.text = element_text(color = "black", size = 12),
+    legend.title = element_text(color = "black", size = 12),
+    legend.position = "bottom",
+    legend.key = element_rect(color = "white")
+    )
+
+
+Fig_S4
+
+#ggsave(filename = "SST_timeline.png", width = 180, height = 150, units = "mm", dpi = 1800)
+
+
+```
+
+
+```{r RQ2 & RQ3 - Symbiont changes - Bar plot and Bleaching alert}
+
+#Create the layout
+Location_species_bar_bleaching_alert_layout <- "
+A
+B
+C
+D"
+
+#Extract the legend of the Symbiont bar plot
+Location_species_bar_plot_legend <- ggpubr::as_ggplot(ggpubr::get_legend(Location_species_bar_plot))
+#Extract the legend of the bleaching alert plot
+Bleaching_alert_joined_legend <- ggpubr::as_ggplot(ggpubr::get_legend(Bleaching_alert_joined))
+
+#Join the plots
+Figure_4 <- Location_species_bar_plot + Location_species_bar_plot_legend + Bleaching_alert_joined + Bleaching_alert_joined_legend +
+  #Include the layout
+  plot_layout(heights = c(2, 0.1, 1, 0.1), design = Location_species_bar_bleaching_alert_layout) +
+  #Include the tags
+  plot_annotation(tag_levels = list(c("A", "", "B", ""))) & theme(plot.tag = element_text(size = 20, face = "bold"), legend.position = "none", plot.tag.position = c(0.05, 1) )  
+
+Figure_4
+
+#ggsave(filename = "Figures/Figure_4.svg", width = 300, height = 300, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_4.pdf", width = 300, height = 300, units = "mm", dpi = 1800)
+#ggsave(filename = "Figures/Figure_4.png", width = 300, height = 300, units = "mm", dpi = 1800)
+
+```
+
+
+```{r R Session}
+
+sessionInfo()
+
+```
+
