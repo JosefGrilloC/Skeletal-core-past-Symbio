@@ -16,4 +16,4 @@ Raw sequences are archived at [https://www.ncbi.nlm.nih.gov/sra/PRJNA1330243]. *
 ## Get started
 For simplicity _**Download the Grillo_et_al_2025 directory**_ that contains the Rproject along with the Data and markdown file.
 
-Moreover, the individual data files are also included.
+Moreover, the _individual data files_ are also included as separate files.
