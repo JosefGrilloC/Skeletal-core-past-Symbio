@@ -1,0 +1,41 @@
+All the modifications done to obtain a final dataset where the metadata and absolute abundance of the Post-MED sequences culminated in the dataset: **Abundance**.    
+
+The variables present in the dataset are:    
+
+* **Sample_name:** The name of each fragment created as a code that combines the coral genus (P = Porites, D = Diploastrea), fragment label (See variable **Fragment_label**) and sampling location and DNA extraction method (B = Palau & PowerSoil EDTA, D = Papua New Guinea & PowerSoil, E = Papua New Guinea & PowerSoil EDTA, F = Papua New Guinea & Ancient DNA).     
+
+* **Fragment_label:** Number given to each fragment to represent the age of the fragment. The fragments labelled from 0 - 6 were present for all samples. Fragments labelled as 16 - 18 were only present for *Porites lobata*. Fragments labelled as 20 - 22 were only present for *Diploastrea heliopora*. (0 = Head, 1 = 5-year-old fragment, 2 = 10-year-old fragment, 3 = 15-year-old fragment, 4 = 20-year-old fragment, 5 = 25-year-old fragment, 6 = 30-year-old fragment, 16 = 80-year-old fragment, 17 = 85-year-old fragment, 18 = 90-year-old fragment, 20 = 100-year-old fragment, 21 = 105-year-old fragment, 22 = 110-year-old fragment).    
+
+* **Fragment_age:** Age of each fragment. (See **Fragment_label**)    
+
+* **Location:** Sampling location of each core. Palau and Papua New Guinea (PNG)    
+
+* **Coral_genus:** Genus of the coral skeleton. (Porites = *Porites lobata*, Diplo = *Diploastrea heliopora*)      
+
+* **DNA_method:** Method employed for DNA extraction. (Qiagen PowerSoil Pro kit = PowerSoil, Decalcification and Qiagen PowerSoil Pro kit = PowerSoil_EDTA, Decalcification and Ancient DNA extraction protocol = Ancient_DNA)    
+
+* **Symbiont_genus_simp:** Simplified classification by Clade of each Post-MED sequences. Grouped by Symbiodiniaceae genus/clade (See *Symbiont_genus*)    
+
+* **Symbiont_genus_simp_others:** Simplified classification by "Clade" of each Post-MED sequences. Grouped by Symbiodiniaceae genus/clade. The others category was added for those sequences with a relative abundance lower than 0.1% over all samples.    
+
+* **Symbiont_genus:** Post-MED sequences corresponding to the genus of each Symbiodiniaceae as assigned by SymPortal (following the old Clade classification). For simplicity in the analysis the genera were kept as clades during the analysis. (Clade A = *Symbiodinium*, Clade B = *Breviolum*, Clade C = *Cladocopium*, Clade D = *Durusdinium*)    
+
+* **Symbiont_genus_others:** Post-MED sequences corresponding to the genus of each Symbiodiniaceae as assigned by SymPortal (following the old Clade classification). For simplicity in the analysis the genera were kept as clades during the analysis. (Clade A = *Symbiodinium*, Clade B = *Breviolum*, Clade C = *Cladocopium*, Clade D = *Durusdinium*). The others category was added for those sequences with a relative abundance lower than 0.1% over all samples.    
+
+* **Abundance:** Absolute abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade    
+
+* **Rel_abund:** Relative abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade per sample     
+
+* **Rel_abund_per:** Percentage relative abundance of the Post-MED sequences of each Symbiodiniaceae genus/clade per sample    
+
+* **Symbiont_genus_simp_color:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_simp**    
+
+* **Symbiont_genus_color:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus**   
+
+* **Symbiont_genus_color_others:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_others**. The others category was assigned to a gray color.    
+
+* **Symbiont_genus_simp_color_others:** Colors assigned to each Post-MED sequence grouped by **Symbiont_genus_simp_others**. The others category was assigned to a gray color.   
+
+* **Symbiont_genus_combined:** Category created for easier plotting.    
+
+* **Symbiont_genus_combined_others:** Category created for easier plotting including others category.   
