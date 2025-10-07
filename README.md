@@ -3,7 +3,7 @@
  This repository contains the analysis code and data supporting: Grillo et al. 2025 - Coral skeletal cores as windows into past Symbiodiniaceae community dynamics. Global Change Biology (doi: )
 
  ## Contents
-- `Grillo_et_al.2025/`: R Project containing the code as a Rmarkdown and the knitted HTML file along with the required Data
+- `Grillo_et_al_2025/`: R Project containing the code as a Rmarkdown and the knitted HTML file along with the required Data
 - `Data/`: Processed data used in analyses.
   - **Absolute_abundance.txt**: Post-MED sequences of the reconstructed Symbiodiniaceae communities of the skeletal cores.
   - **Metadata.txt**: Raw data associated with the coral skeletal cores and Post-MED sequences including location, age and species
