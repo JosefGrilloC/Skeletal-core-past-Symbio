@@ -1,6 +1,6 @@
 # Skeletal-core-past-Symbio
 
- This repository contains the analysis code and data supporting: Grillo et al. 2025 - Coral skeletal cores as windows into past Symbiodiniaceae community dynamics. Global Change Biology (doi: )
+ This repository contains the analysis code and data supporting: Grillo et al. 2025 - Coral skeletal cores as windows into past Symbiodiniaceae community dynamics. 
 
  ## Contents
 - `Grillo_et_al_2025/`: R Project containing the code as a Rmarkdown and the knitted HTML file along with the required Data
@@ -16,5 +16,3 @@ Raw sequences are archived at [https://www.ncbi.nlm.nih.gov/sra/PRJNA1330243]. *
 
 ## Get started
 For simplicity _**Download the Grillo_et_al_2025 directory**_ that contains the Rproject along with the Data and markdown file.
-
-Moreover, the _individual data files_ are also included as separate files.
